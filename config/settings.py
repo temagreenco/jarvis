@@ -64,6 +64,11 @@ class Settings(BaseSettings):
     audio_codec: str = "aac"
     audio_bitrate: str = "192k"
 
+    # Chat Settings
+    chat_context_messages: int = 20  # Max messages to include in context
+    chat_max_response_tokens: int = 2048  # Max tokens in response
+    chat_temperature: float = 0.7  # Response creativity (0.0-1.0)
+
     # Telegram Bot
     telegram_token: Optional[str] = None
     telegram_allowed_users: list[int] = Field(default_factory=list)
