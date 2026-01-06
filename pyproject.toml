@@ -20,11 +20,11 @@ classifiers = [
 ]
 
 [project.scripts]
-jarvis = "jarvis.cli:main"
+jarvis = "cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["core*", "modules*", "agents*", "interfaces*", "utils*"]
+include = ["core*", "modules*", "agents*", "interfaces*", "utils*", "config*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

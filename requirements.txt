@@ -5,6 +5,11 @@ pydantic-settings>=2.0.0
 rich>=13.0.0
 typer>=0.9.0
 
+# API Server
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.6
+
 # AI/ML
 ollama>=0.1.0
 faster-whisper>=1.0.0
@@ -28,3 +33,4 @@ aiofiles>=23.0.0
 tqdm>=4.65.0
 loguru>=0.7.0
 tenacity>=8.2.0
+httpx>=0.26.0

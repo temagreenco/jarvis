@@ -1,0 +1,48 @@
+version: "3.8"
+
+services:
+  jarvis:
+    build: .
+    container_name: jarvis
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./videos:/app/videos
+      - ./output:/app/output
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./models:/app/models
+    environment:
+      - JARVIS_OLLAMA_HOST=http://ollama:11434
+      - JARVIS_WHISPER_DEVICE=cuda
+      - JARVIS_USE_GPU=true
+    restart: unless-stopped
+    depends_on:
+      - ollama
+    # Uncomment for GPU support
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: jarvis-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    # Uncomment for GPU support
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+volumes:
+  ollama_data:
