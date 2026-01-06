@@ -1,0 +1,49 @@
+# JARVIS GPU - RunPod Serverless
+# Optimized for RTX 4090 / A100 with CUDA 12.1
+
+FROM runpod/pytorch:2.1.0-py3.10-cuda12.1.0-devel-ubuntu22.04
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    libsm6 \
+    libxext6 \
+    libgl1-mesa-glx \
+    git \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Install GPU-specific packages
+RUN pip install --no-cache-dir \
+    runpod \
+    httpx \
+    faster-whisper \
+    torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121 \
+    ultralytics
+
+# Pre-download models for faster cold starts
+RUN python -c "from faster_whisper import WhisperModel; WhisperModel('large-v3', device='cpu', compute_type='int8')" || true
+RUN python -c "from ultralytics import YOLO; YOLO('yolov8n.pt')" || true
+
+# Copy application code
+COPY . .
+
+# Create directories
+RUN mkdir -p /app/output /app/models /app/logs
+
+# Environment for GPU
+ENV PYTHONUNBUFFERED=1
+ENV NVIDIA_VISIBLE_DEVICES=all
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,video
+ENV JARVIS_WHISPER_DEVICE=cuda
+ENV JARVIS_WHISPER_COMPUTE_TYPE=float16
+ENV JARVIS_VIDEO_CODEC=h264_nvenc
+
+# RunPod serverless entry point
+CMD ["python", "-u", "deploy/handler.py"]
