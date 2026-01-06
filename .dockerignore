@@ -1,64 +1,27 @@
-# Dependencies
-node_modules/
-api/node_modules/
-.venv/
-venv/
-__pycache__/
-*.pyc
+# ===================
+# EXCLUDE EVERYTHING FIRST
+# ===================
+*
 
-# Large files - models
-models/
-*.pt
-*.pth
-*.onnx
-*.bin
-*.safetensors
+# ===================
+# THEN INCLUDE ONLY WHAT WE NEED
+# ===================
+!core/
+!modules/
+!config/
+!utils/
+!deploy/handler.py
+!requirements.txt
+!pyproject.toml
+!*.py
 
-# Output files
-output/
-*.mp4
-*.avi
-*.mkv
-*.mov
-*.webm
-
-# Data/downloads
-data/
-downloads/
-*.zip
-*.tar.gz
-
-# Logs
-logs/
-*.log
-
-# IDE/Editor
-.vscode/
-.idea/
-*.swp
-
-# Git
-.git/
-.gitignore
-
-# Docker
-Dockerfile*
-docker-compose*
-!deploy/Dockerfile.runpod
-
-# Environment
-.env
-.env.*
-
-# Temp files
-tmp/
-temp/
-*.tmp
-
-# OS files
-.DS_Store
-Thumbs.db
-
-# Test files
-tests/
-test_*.py
+# But still exclude these from included dirs
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/.git/
+**/node_modules/
+**/*.pt
+**/*.pth
+**/*.mp4
+**/*.log
