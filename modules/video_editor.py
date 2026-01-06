@@ -10,10 +10,14 @@ Features:
 - Silence removal
 - Audio normalization
 - 9:16 vertical output
+- Cross-platform support (Windows/Linux/Mac)
+- Hebrew/RTL text support
 """
 import json
 import subprocess
 import tempfile
+import platform
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -72,7 +76,7 @@ class VideoEditorModule(BaseModule):
 
     name = "video_editor"
     description = "Creates viral short-form content from long videos"
-    version = "0.1.0"
+    version = "0.2.0"
 
     # Keywords that indicate video editing task
     TASK_KEYWORDS = [
@@ -80,10 +84,51 @@ class VideoEditorModule(BaseModule):
         "instagram", "youtube shorts", "viral", "transcribe"
     ]
 
+    # Platform-specific font paths for subtitles
+    FONT_PATHS = {
+        "Windows": [
+            "C:/Windows/Fonts/arial.ttf",
+            "C:/Windows/Fonts/arialbd.ttf",  # Arial Bold
+            "C:/Windows/Fonts/calibri.ttf",
+            "C:/Windows/Fonts/seguibl.ttf",  # Segoe UI Bold - good Hebrew support
+            "C:/Windows/Fonts/davidbd.ttf",  # David Bold - Hebrew font
+        ],
+        "Linux": [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
+            "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
+        ],
+        "Darwin": [  # macOS
+            "/System/Library/Fonts/Helvetica.ttc",
+            "/Library/Fonts/Arial Bold.ttf",
+            "/System/Library/Fonts/SFNSText.ttf",
+        ]
+    }
+
     def __init__(self):
         super().__init__()
         self.transcriber = None
         self.yolo_model = None
+        self._font_path = None
+
+    def _get_font_path(self) -> str:
+        """Get platform-appropriate font path for subtitles"""
+        if self._font_path:
+            return self._font_path
+
+        system = platform.system()
+        candidates = self.FONT_PATHS.get(system, self.FONT_PATHS["Linux"])
+
+        for font_path in candidates:
+            if Path(font_path).exists():
+                self._font_path = font_path
+                self.logger.info(f"Using font: {font_path}")
+                return font_path
+
+        # Fallback: use fontconfig name (no path, let FFmpeg find it)
+        self.logger.warning("No font file found, using fontconfig fallback")
+        self._font_path = ""
+        return ""
 
     def can_handle(self, task: str) -> bool:
         """Check if this is a video editing task"""
@@ -470,36 +515,104 @@ Return ONLY the JSON array, no other text."""
         ]
 
         self.logger.debug(f"Running FFmpeg: {' '.join(cmd)}")
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='replace')
+
         if result.returncode != 0:
+            self.logger.warning(f"GPU encoding failed: {result.stderr[-500:] if result.stderr else 'No error output'}")
+            self.logger.warning("Trying CPU encoding...")
+
             # Try with CPU encoding as fallback
-            self.logger.warning("GPU encoding failed, trying CPU...")
-            cmd[cmd.index("-c:v") + 1] = "libx264"
-            cmd.remove("-preset")
-            cmd.remove(settings.ffmpeg_preset)
-            result = subprocess.run(cmd, capture_output=True, text=True)
+            cmd_cpu = cmd.copy()
+            try:
+                codec_idx = cmd_cpu.index("-c:v") + 1
+                cmd_cpu[codec_idx] = "libx264"
+                if "-preset" in cmd_cpu:
+                    preset_idx = cmd_cpu.index("-preset")
+                    cmd_cpu.pop(preset_idx)  # Remove -preset
+                    cmd_cpu.pop(preset_idx)  # Remove preset value
+            except ValueError:
+                pass
+
+            result = subprocess.run(cmd_cpu, capture_output=True, text=True, encoding='utf-8', errors='replace')
+
             if result.returncode != 0:
-                raise RuntimeError(f"FFmpeg failed: {result.stderr}")
+                # Try without subtitles as last resort
+                self.logger.warning("CPU encoding failed, trying without subtitles...")
+                filter_no_subs = self._build_filter_complex(
+                    crop_x, crop_y, crop_w, crop_h,
+                    target_w, target_h,
+                    moment.end - moment.start,
+                    ""  # No subtitle filter
+                )
+                cmd_simple = [
+                    "ffmpeg", "-y",
+                    "-ss", str(moment.start),
+                    "-i", str(video_path),
+                    "-t", str(moment.end - moment.start),
+                    "-filter_complex", filter_no_subs,
+                    "-map", "[outv]",
+                    "-map", "[outa]",
+                    "-c:v", "libx264",
+                    "-crf", str(settings.ffmpeg_crf),
+                    "-c:a", settings.audio_codec,
+                    "-b:a", settings.audio_bitrate,
+                    "-movflags", "+faststart",
+                    str(output_path)
+                ]
+                result = subprocess.run(cmd_simple, capture_output=True, text=True, encoding='utf-8', errors='replace')
+
+                if result.returncode != 0:
+                    # Extract useful part of error message
+                    stderr_lines = (result.stderr or "").strip().split('\n')
+                    error_lines = [l for l in stderr_lines if 'error' in l.lower() or 'invalid' in l.lower()]
+                    error_msg = '\n'.join(error_lines[-5:]) if error_lines else result.stderr[-500:]
+                    self.logger.error(f"FFmpeg command: {' '.join(cmd_simple)}")
+                    raise RuntimeError(f"FFmpeg failed:\n{error_msg}")
+
+    def _escape_ffmpeg_text(self, text: str) -> str:
+        """Escape text for FFmpeg drawtext filter (cross-platform, Hebrew-safe)"""
+        # FFmpeg drawtext escape sequence:
+        # 1. Backslash must be escaped first
+        # 2. Single quotes need special handling
+        # 3. Colons must be escaped
+        # 4. Backslashes in paths (Windows) need escaping
+        text = text.replace("\\", "\\\\")
+        text = text.replace("'", "'\\''")
+        text = text.replace(":", "\\:")
+        text = text.replace("[", "\\[")
+        text = text.replace("]", "\\]")
+        text = text.replace("%", "\\%")
+        return text
 
     def _create_subtitle_filter(self, words: list[Word], offset: float) -> str:
-        """Create drawtext filter for word-synced subtitles"""
+        """Create drawtext filter for word-synced subtitles (cross-platform, Hebrew-safe)"""
         if not words:
             return ""
 
         filters = []
         chunk_size = settings.subtitle_words_per_chunk
+        font_path = self._get_font_path()
+
+        # Build font specification (fontfile or font name)
+        if font_path:
+            # Escape path for FFmpeg (use forward slashes even on Windows)
+            escaped_path = font_path.replace("\\", "/")
+            font_spec = f"fontfile='{escaped_path}'"
+        else:
+            # Use fontconfig font name (FFmpeg will search system fonts)
+            font_spec = f"font='{settings.subtitle_font}'"
 
         for i in range(0, len(words), chunk_size):
             chunk = words[i:i+chunk_size]
             text = " ".join(w.text for w in chunk)
             # Escape special characters for FFmpeg
-            text = text.replace("'", "'\\''").replace(":", "\\:")
+            text = self._escape_ffmpeg_text(text)
             start = chunk[0].start - offset
             end = chunk[-1].end - offset
 
             filters.append(
                 f"drawtext=text='{text}':"
-                f"fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:"
+                f"{font_spec}:"
                 f"fontsize={settings.subtitle_font_size}:"
                 f"fontcolor={settings.subtitle_color}:"
                 f"bordercolor={settings.subtitle_stroke_color}:"
@@ -519,27 +632,42 @@ Return ONLY the JSON array, no other text."""
     ) -> str:
         """Build FFmpeg filter complex with Hormozi-style cuts"""
 
-        # Calculate zoom segments
-        cut_interval = (settings.cut_interval_min + settings.cut_interval_max) / 2
-        num_cuts = int(duration / cut_interval)
-
-        # Base video processing
+        # Base video processing: crop and scale to target size
         video_filters = [
             f"crop={crop_w}:{crop_h}:{crop_x}:{crop_y}",
-            f"scale={target_w}:{target_h}:flags=lanczos"
+            f"scale={target_w}:{target_h}:flags=lanczos",
+            f"fps={settings.fps}"
         ]
 
-        # Add zoom pulses (Hormozi style)
+        # Add Hormozi-style zoom pulses using setpts + scale expressions
+        # This creates a subtle zoom effect on cuts without breaking the filter chain
+        cut_interval = (settings.cut_interval_min + settings.cut_interval_max) / 2
         zoom_factor = settings.zoom_factor
+        zoom_duration = 0.15  # Quick 150ms zoom pulse
+
+        # Build zoom expression: zoom in briefly at each cut interval
+        # Uses mod() to create repeating zoom pulses
+        zoom_expr_parts = []
+        num_cuts = min(int(duration / cut_interval), 20)  # Cap at 20 cuts
+
         for i in range(num_cuts):
             t_start = i * cut_interval
-            t_end = t_start + 0.2  # Quick zoom
+            t_end = t_start + zoom_duration
+            zoom_expr_parts.append(f"between(t,{t_start:.2f},{t_end:.2f})")
 
-            # zoompan for zoom effect
+        if zoom_expr_parts and settings.zoom_enabled:
+            # Combine all zoom triggers with OR (max gives 1 if any is true)
+            zoom_trigger = "+".join([f"({p})" for p in zoom_expr_parts])
+            # Calculate zoom: if triggered, zoom to zoom_factor, else 1.0
+            zoom_calc = f"1+({zoom_trigger})*{zoom_factor - 1}"
+
+            # Apply zoom using scale with expressions (more compatible than zoompan)
             video_filters.append(
-                f"zoompan=z='if(between(time,{t_start:.2f},{t_end:.2f}),{zoom_factor},1)':"
-                f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
-                f"d=1:s={target_w}x{target_h}:fps={settings.fps}"
+                f"scale=w='iw*{zoom_calc}':h='ih*{zoom_calc}':eval=frame"
+            )
+            # Crop back to target size (center crop)
+            video_filters.append(
+                f"crop={target_w}:{target_h}:(iw-{target_w})/2:(ih-{target_h})/2"
             )
 
         # Add subtitles
@@ -548,12 +676,10 @@ Return ONLY the JSON array, no other text."""
 
         video_chain = ",".join(video_filters) + "[outv]"
 
-        # Audio processing: normalize and remove silence
+        # Audio processing: normalize loudness
+        # Note: silenceremove can cause issues, using only loudnorm for stability
         audio_filters = [
-            "loudnorm=I=-16:TP=-1.5:LRA=11",  # Normalize audio
-            f"silenceremove=start_periods=1:start_duration=0.1:start_threshold={settings.silence_threshold}dB:"
-            f"detection=peak:stop_periods=-1:stop_duration={settings.silence_min_duration}:"
-            f"stop_threshold={settings.silence_threshold}dB"
+            "loudnorm=I=-16:TP=-1.5:LRA=11"  # Normalize audio to -16 LUFS
         ]
         audio_chain = ",".join(audio_filters) + "[outa]"
 

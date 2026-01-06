@@ -53,7 +53,8 @@ class Settings(BaseSettings):
     # Editing Style (Hormozi style)
     cut_interval_min: float = 2.5  # seconds
     cut_interval_max: float = 5.0  # seconds
-    zoom_factor: float = 1.25  # 25% zoom on cuts
+    zoom_enabled: bool = True  # Enable/disable zoom effects (disable if FFmpeg fails)
+    zoom_factor: float = 1.15  # 15% zoom on cuts (1.25 can cause issues)
     silence_threshold: float = -40  # dB
     silence_min_duration: float = 0.3  # seconds
 
