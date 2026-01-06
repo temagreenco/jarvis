@@ -31,6 +31,8 @@ def process(
     video: Path = typer.Option(..., "--video", "-v", help="Path to source video file"),
     output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output directory"),
     reels: int = typer.Option(8, "--reels", "-n", help="Number of reels to generate"),
+    lang: str = typer.Option("auto", "--lang", "-l", help="Language code (auto, en, he, es, etc.)"),
+    shakshuka: bool = typer.Option(False, "--shakshuka", "-s", help="Shakshuka mode: mashup + 3 mini reels"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Validate inputs without processing"),
 ) -> None:
     """Process a video and create viral short-form reels."""
@@ -45,6 +47,8 @@ def process(
         console.print(f"  Video: {video}")
         console.print(f"  Output: {output_dir}")
         console.print(f"  Reels: {reels}")
+        console.print(f"  Language: {lang}")
+        console.print(f"  Shakshuka: {shakshuka}")
         console.print("[green]Validation passed![/green]")
         return
 
@@ -57,11 +61,14 @@ def process(
     ) as progress:
         task = progress.add_task("Processing video...", total=None)
 
+        task_desc = "Create shakshuka mashup from video" if shakshuka else "Create viral reels from video"
         result = jarvis.process(
-            task="Create viral reels from video",
+            task=task_desc,
             video_path=str(video),
             output_dir=str(output_dir),
             num_reels=reels,
+            language=lang if lang != "auto" else None,
+            shakshuka=shakshuka,
         )
 
         progress.update(task, completed=True)

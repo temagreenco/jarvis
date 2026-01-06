@@ -191,6 +191,9 @@ class VideoEditorModule(BaseModule):
                   Defaults to ``settings.output_dir``.
                 - num_reels (int): Number of reels to generate.
                   Defaults to ``settings.target_reels``.
+                - language (str | None): Language code for transcription.
+                  None = auto-detect.
+                - shakshuka (bool): Enable Shakshuka mode (mashup + mini reels).
 
         Returns:
             TaskResult with:
@@ -207,6 +210,8 @@ class VideoEditorModule(BaseModule):
         video_path = Path(kwargs["video_path"])
         output_dir = Path(kwargs.get("output_dir", settings.output_dir))
         num_reels = kwargs.get("num_reels", settings.target_reels)
+        language = kwargs.get("language")  # None = auto-detect
+        shakshuka = kwargs.get("shakshuka", False)
 
         output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -220,8 +225,9 @@ class VideoEditorModule(BaseModule):
             self.logger.info(f"Duration: {video_info['duration']:.1f}s, Resolution: {video_info['width']}x{video_info['height']}")
 
             # Step 2: Transcribe with word-level timestamps
-            self.logger.info("[2/6] Transcribing audio (GPU)...")
-            segments = self._transcribe(video_path)
+            lang_str = language if language else "auto-detect"
+            self.logger.info(f"[2/6] Transcribing audio (GPU, lang={lang_str})...")
+            segments = self._transcribe(video_path, language=language)
             self.logger.info(f"Transcribed {len(segments)} segments")
 
             # Step 3: Find viral moments with AI
@@ -233,22 +239,33 @@ class VideoEditorModule(BaseModule):
             self.logger.info("[4/6] Detecting faces for smart crop...")
             face_data = self._detect_faces(video_path, moments)
 
-            # Step 5: Generate reels
-            self.logger.info("[5/6] Generating reels...")
-            reel_paths = []
-            for i, moment in enumerate(moments):
-                self.logger.info(f"Creating reel {i+1}/{len(moments)}: {moment.hook[:50]}...")
-                reel_path = output_dir / f"reel_{i+1:02d}.mp4"
-                words_for_moment = self._get_words_for_timerange(segments, moment.start, moment.end)
-                self._create_reel(
+            # Step 5: Generate reels (or Shakshuka mode)
+            if shakshuka:
+                self.logger.info("[5/6] Generating Shakshuka mashup...")
+                reel_paths = self._create_shakshuka(
                     video_path=video_path,
-                    output_path=reel_path,
-                    moment=moment,
-                    words=words_for_moment,
-                    face_data=face_data.get(i, []),
+                    output_dir=output_dir,
+                    segments=segments,
+                    moments=moments[:3],  # Top 3 moments for mini reels
+                    face_data=face_data,
                     video_info=video_info
                 )
-                reel_paths.append(reel_path)
+            else:
+                self.logger.info("[5/6] Generating reels...")
+                reel_paths = []
+                for i, moment in enumerate(moments):
+                    self.logger.info(f"Creating reel {i+1}/{len(moments)}: {moment.hook[:50]}...")
+                    reel_path = output_dir / f"reel_{i+1:02d}.mp4"
+                    words_for_moment = self._get_words_for_timerange(segments, moment.start, moment.end)
+                    self._create_reel(
+                        video_path=video_path,
+                        output_path=reel_path,
+                        moment=moment,
+                        words=words_for_moment,
+                        face_data=face_data.get(i, []),
+                        video_info=video_info
+                    )
+                    reel_paths.append(reel_path)
 
             # Step 6: Generate Premiere Pro XML (optional)
             self.logger.info("[6/6] Generating Premiere Pro XML...")
@@ -291,8 +308,13 @@ class VideoEditorModule(BaseModule):
             "fps": eval(video_stream.get("r_frame_rate", "30/1")),
         }
 
-    def _transcribe(self, video_path: Path) -> list[Segment]:
-        """Transcribe video with faster-whisper (GPU accelerated)"""
+    def _transcribe(self, video_path: Path, language: Optional[str] = None) -> list[Segment]:
+        """Transcribe video with faster-whisper (GPU accelerated).
+
+        Args:
+            video_path: Path to the video file.
+            language: Language code (e.g., 'en', 'he', 'es'). None = auto-detect.
+        """
         try:
             from faster_whisper import WhisperModel
         except ImportError:
@@ -309,8 +331,11 @@ class VideoEditorModule(BaseModule):
         segments_raw, info = self.transcriber.transcribe(
             str(video_path),
             word_timestamps=True,
-            language="en"
+            language=language  # None = auto-detect
         )
+
+        if language is None:
+            self.logger.info(f"Detected language: {info.language} (prob: {info.language_probability:.2f})")
 
         segments = []
         for seg in segments_raw:
@@ -407,37 +432,148 @@ Return ONLY the JSON array, no other text."""
             self.logger.warning(f"Ollama analysis failed: {e}, using fallback")
             return self._fallback_moment_detection(segments, num_moments)
 
+    # Hook detection patterns (questions, bold statements, calls to action)
+    HOOK_PATTERNS: list[str] = [
+        r"^(why|what|how|when|where|who|which|do you|did you|have you|can you|would you)",
+        r"^(here'?s? (the|a|my)|let me (tell|show|explain))",
+        r"^(the (secret|truth|problem|key|reason|best|worst|biggest|most))",
+        r"^(i'?m going to|i want to|you need to|you should|you have to)",
+        r"^(stop|wait|listen|look|think about|imagine|picture this)",
+        r"^(number one|first|the first thing|step one)",
+        r"(changed my life|game changer|mind blown|this is huge|nobody|everyone|always|never)",
+        r"\?$",  # Ends with question mark
+    ]
+
+    def _score_segment_hook(self, text: str) -> float:
+        """Score a segment for hook potential (0-10)."""
+        text_lower = text.lower().strip()
+        score = 0.0
+
+        for pattern in self.HOOK_PATTERNS:
+            if re.search(pattern, text_lower, re.IGNORECASE):
+                score += 2.0
+
+        # Bonus for shorter punchy sentences
+        word_count = len(text.split())
+        if 5 <= word_count <= 15:
+            score += 1.0
+
+        # Bonus for questions
+        if text.strip().endswith("?"):
+            score += 1.5
+
+        return min(score, 10.0)
+
+    def _find_speech_boundaries(self, segments: list[Segment]) -> list[tuple[float, float, float]]:
+        """Find natural speech boundaries based on pauses and sentence structure.
+
+        Returns list of (start, end, pause_duration) tuples for potential cut points.
+        """
+        boundaries = []
+
+        for i, seg in enumerate(segments):
+            # Check for sentence-ending punctuation
+            text = seg.text.strip()
+            is_sentence_end = text.endswith(('.', '!', '?', '...'))
+
+            # Calculate pause after this segment
+            pause = 0.0
+            if i < len(segments) - 1:
+                pause = segments[i + 1].start - seg.end
+
+            # Score this as a cut point
+            if is_sentence_end or pause > 0.3:
+                boundaries.append((seg.start, seg.end, pause))
+
+        return boundaries
+
     def _fallback_moment_detection(self, segments: list[Segment], num_moments: int) -> list[ViralMoment]:
-        """Fallback: split video into equal parts if AI fails"""
+        """Fallback: find best moments using hook patterns and speech boundaries."""
         if not segments:
             return []
 
-        total_duration = segments[-1].end
-        target_duration = 30.0  # 30 second clips
-        moments = []
+        # Find all natural speech boundaries
+        boundaries = self._find_speech_boundaries(segments)
 
-        # Find natural break points (longer pauses between segments)
-        current_start = 0.0
-        for i, seg in enumerate(segments):
-            duration = seg.end - current_start
-            if duration >= settings.min_reel_duration:
-                # Check if this is a good break point
-                if i < len(segments) - 1:
-                    gap = segments[i+1].start - seg.end
-                    if gap > 0.5 or duration >= target_duration:  # Natural pause or long enough
-                        moments.append(ViralMoment(
-                            start=current_start,
-                            end=seg.end,
-                            score=5.0,
-                            reason="Auto-detected segment",
-                            hook=seg.text[:50] if seg.text else ""
-                        ))
-                        current_start = segments[i+1].start if i < len(segments) - 1 else seg.end
+        # Score each potential clip
+        candidates = []
+        i = 0
 
-                        if len(moments) >= num_moments:
-                            break
+        while i < len(segments):
+            seg = segments[i]
 
-        return moments[:num_moments]
+            # Score this segment as a hook
+            hook_score = self._score_segment_hook(seg.text)
+
+            # Find the best end point for a 15-40 second clip
+            clip_start = seg.start
+            best_end = None
+            best_end_score = 0.0
+
+            for j in range(i, len(segments)):
+                end_seg = segments[j]
+                duration = end_seg.end - clip_start
+
+                if duration < settings.min_reel_duration:
+                    continue
+                if duration > settings.max_reel_duration:
+                    break
+
+                # Score this end point
+                end_text = end_seg.text.strip()
+                end_score = 0.0
+
+                # Prefer sentence endings
+                if end_text.endswith(('.', '!', '?')):
+                    end_score += 2.0
+
+                # Prefer natural pauses
+                if j < len(segments) - 1:
+                    pause = segments[j + 1].start - end_seg.end
+                    if pause > 0.5:
+                        end_score += 1.5
+                    elif pause > 0.3:
+                        end_score += 1.0
+
+                # Prefer clips closer to 25-35 seconds (sweet spot)
+                if 25 <= duration <= 35:
+                    end_score += 1.0
+
+                if end_score > best_end_score:
+                    best_end = end_seg.end
+                    best_end_score = end_score
+
+            if best_end and best_end > clip_start:
+                candidates.append(ViralMoment(
+                    start=clip_start,
+                    end=best_end,
+                    score=hook_score + best_end_score,
+                    reason="Hook pattern + natural boundary",
+                    hook=seg.text[:50] if seg.text else ""
+                ))
+                # Skip past this clip to avoid overlap
+                while i < len(segments) and segments[i].end <= best_end:
+                    i += 1
+            else:
+                i += 1
+
+        # Sort by score (best first) and return top N non-overlapping
+        candidates.sort(key=lambda x: x.score, reverse=True)
+
+        selected = []
+        for cand in candidates:
+            # Check for overlap with already selected
+            overlaps = False
+            for sel in selected:
+                if not (cand.end <= sel.start or cand.start >= sel.end):
+                    overlaps = True
+                    break
+            if not overlaps:
+                selected.append(cand)
+                if len(selected) >= num_moments:
+                    break
+
+        return selected
 
     def _detect_faces(self, video_path: Path, moments: list[ViralMoment]) -> dict[int, list[FaceDetection]]:
         """Detect faces in video for smart cropping using YOLOv8"""
@@ -580,6 +716,171 @@ Return ONLY the JSON array, no other text."""
             result = subprocess.run(cmd, capture_output=True, text=True)
             if result.returncode != 0:
                 raise RuntimeError(f"FFmpeg failed: {result.stderr}")
+
+    def _create_shakshuka(
+        self,
+        video_path: Path,
+        output_dir: Path,
+        segments: list[Segment],
+        moments: list[ViralMoment],
+        face_data: dict[int, list[FaceDetection]],
+        video_info: VideoInfo
+    ) -> list[Path]:
+        """Create Shakshuka mode output: word mashup + 3 mini reels.
+
+        Shakshuka mode generates:
+        1. A rapid-fire word mashup (10-15 seconds) with punchy words
+        2. 3 mini reels from the top viral moments
+
+        Returns list of generated file paths.
+        """
+        output_paths = []
+
+        # Collect all words from segments
+        all_words = []
+        for seg in segments:
+            all_words.extend(seg.words)
+
+        # Step 1: Create word mashup
+        self.logger.info("Creating word mashup...")
+        mashup_path = output_dir / "shakshuka_mashup.mp4"
+        self._create_word_mashup(video_path, mashup_path, all_words, video_info, face_data)
+        output_paths.append(mashup_path)
+
+        # Step 2: Create 3 mini reels from top moments
+        for i, moment in enumerate(moments[:3]):
+            self.logger.info(f"Creating mini reel {i+1}/3...")
+            reel_path = output_dir / f"shakshuka_reel_{i+1:02d}.mp4"
+            words_for_moment = self._get_words_for_timerange(segments, moment.start, moment.end)
+            self._create_reel(
+                video_path=video_path,
+                output_path=reel_path,
+                moment=moment,
+                words=words_for_moment,
+                face_data=face_data.get(i, []),
+                video_info=video_info
+            )
+            output_paths.append(reel_path)
+
+        return output_paths
+
+    def _create_word_mashup(
+        self,
+        video_path: Path,
+        output_path: Path,
+        words: list[Word],
+        video_info: VideoInfo,
+        face_data: dict[int, list[FaceDetection]]
+    ) -> None:
+        """Create a rapid-fire word mashup from powerful words."""
+        # Power words to look for (high-impact vocabulary)
+        power_patterns = [
+            r"^(amazing|incredible|insane|crazy|huge|massive|best|worst|secret|truth)$",
+            r"^(money|success|rich|wealth|power|freedom|love|hate|fear|win|lose)$",
+            r"^(now|today|always|never|everyone|nobody|everything|nothing)$",
+            r"^(stop|start|go|run|fight|build|create|destroy|change|grow)$",
+            r"^(why|what|how|who|when|where)$",
+        ]
+
+        # Find power words with good timestamps
+        power_words = []
+        for word in words:
+            text = word.text.lower().strip()
+            for pattern in power_patterns:
+                if re.match(pattern, text):
+                    power_words.append(word)
+                    break
+
+        # If not enough power words, add random high-confidence words
+        if len(power_words) < 15:
+            other_words = [w for w in words if w not in power_words and w.confidence > 0.9]
+            # Sort by confidence and take top words
+            other_words.sort(key=lambda w: w.confidence, reverse=True)
+            power_words.extend(other_words[:15 - len(power_words)])
+
+        # Limit to ~15-20 words for 10-15 second mashup
+        power_words = power_words[:20]
+
+        if len(power_words) < 5:
+            self.logger.warning("Not enough words for mashup, skipping")
+            return
+
+        # Calculate crop parameters
+        src_w, src_h = video_info["width"], video_info["height"]
+        target_w, target_h = settings.output_width, settings.output_height
+        target_ratio = target_w / target_h
+
+        # Use first face detection or center
+        all_faces = [f for faces in face_data.values() for f in faces]
+        if all_faces:
+            avg_x = sum(f.x + f.width/2 for f in all_faces) / len(all_faces)
+            avg_y = sum(f.y + f.height/2 for f in all_faces) / len(all_faces)
+            center_x, center_y = int(avg_x), int(avg_y)
+        else:
+            center_x, center_y = src_w // 2, src_h // 2
+
+        if src_w / src_h > target_ratio:
+            crop_h = src_h
+            crop_w = int(crop_h * target_ratio)
+        else:
+            crop_w = src_w
+            crop_h = int(crop_w / target_ratio)
+
+        crop_x = max(0, min(center_x - crop_w // 2, src_w - crop_w))
+        crop_y = max(0, min(center_y - crop_h // 2, src_h - crop_h))
+
+        # Create concat file for FFmpeg
+        concat_file = output_path.parent / "concat_list.txt"
+        temp_clips = []
+
+        with open(concat_file, 'w') as f:
+            for i, word in enumerate(power_words):
+                # Extract each word as a clip (with 0.1s padding for impact)
+                clip_path = output_path.parent / f"_temp_word_{i:03d}.mp4"
+                temp_clips.append(clip_path)
+
+                duration = max(0.3, word.end - word.start + 0.15)  # Min 0.3s per word
+                start_time = max(0, word.start - 0.05)  # Small lead-in
+
+                # Quick clip extraction with crop
+                clip_cmd = [
+                    "ffmpeg", "-y",
+                    "-ss", str(start_time),
+                    "-i", str(video_path),
+                    "-t", str(duration),
+                    "-vf", f"crop={crop_w}:{crop_h}:{crop_x}:{crop_y},scale={target_w}:{target_h}",
+                    "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
+                    "-c:a", "aac", "-b:a", "128k",
+                    str(clip_path)
+                ]
+                subprocess.run(clip_cmd, capture_output=True)
+                f.write(f"file '{clip_path}'\n")
+
+        # Concatenate all clips
+        concat_cmd = [
+            "ffmpeg", "-y",
+            "-f", "concat", "-safe", "0",
+            "-i", str(concat_file),
+            "-c:v", settings.video_codec,
+            "-preset", settings.ffmpeg_preset,
+            "-crf", str(settings.ffmpeg_crf),
+            "-c:a", settings.audio_codec,
+            "-b:a", settings.audio_bitrate,
+            "-movflags", "+faststart",
+            str(output_path)
+        ]
+
+        result = subprocess.run(concat_cmd, capture_output=True, text=True)
+
+        # Cleanup temp files
+        for clip in temp_clips:
+            if clip.exists():
+                clip.unlink()
+        if concat_file.exists():
+            concat_file.unlink()
+
+        if result.returncode != 0:
+            self.logger.warning(f"Mashup creation failed: {result.stderr[:200]}")
 
     def _create_subtitle_filter(self, words: list[Word], offset: float) -> str:
         """Create drawtext filter for word-synced subtitles"""
