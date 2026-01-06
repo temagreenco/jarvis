@@ -1,0 +1,64 @@
+# Dependencies
+node_modules/
+api/node_modules/
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Large files - models
+models/
+*.pt
+*.pth
+*.onnx
+*.bin
+*.safetensors
+
+# Output files
+output/
+*.mp4
+*.avi
+*.mkv
+*.mov
+*.webm
+
+# Data/downloads
+data/
+downloads/
+*.zip
+*.tar.gz
+
+# Logs
+logs/
+*.log
+
+# IDE/Editor
+.vscode/
+.idea/
+*.swp
+
+# Git
+.git/
+.gitignore
+
+# Docker
+Dockerfile*
+docker-compose*
+!deploy/Dockerfile.runpod
+
+# Environment
+.env
+.env.*
+
+# Temp files
+tmp/
+temp/
+*.tmp
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test files
+tests/
+test_*.py
