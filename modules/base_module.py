@@ -3,13 +3,21 @@ Base Module - Template for all JARVIS capabilities
 Every module inherits from this.
 """
 from abc import ABC, abstractmethod
-from typing import Any, Optional
+from typing import Any, Optional, TypedDict
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 import time
 
 from utils.logger import get_logger
+
+
+class ModuleStatusDict(TypedDict):
+    """Type definition for module status information."""
+    name: str
+    description: str
+    version: str
+    status: str
 
 
 class TaskStatus(Enum):
@@ -114,7 +122,7 @@ class BaseModule(ABC):
                 duration=time.time() - (self._start_time or time.time())
             )
 
-    def get_status(self) -> dict:
+    def get_status(self) -> ModuleStatusDict:
         """Get current module status"""
         return {
             "name": self.name,

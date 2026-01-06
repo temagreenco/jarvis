@@ -68,9 +68,10 @@ class Settings(BaseSettings):
     telegram_token: Optional[str] = None
     telegram_allowed_users: list[int] = Field(default_factory=list)
 
-    class Config:
-        env_file = ".env"
-        env_prefix = "JARVIS_"
+    model_config = {
+        "env_file": ".env",
+        "env_prefix": "JARVIS_",
+    }
 
 
 # Global settings instance

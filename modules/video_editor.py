@@ -16,8 +16,16 @@ import subprocess
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Optional, TypedDict
 import re
+
+
+class VideoInfo(TypedDict):
+    """Video metadata returned from ffprobe analysis."""
+    duration: float
+    width: int
+    height: int
+    fps: float
 
 from modules.base_module import BaseModule, TaskResult
 from config.settings import settings
@@ -68,30 +76,97 @@ class FaceDetection:
 class VideoEditorModule(BaseModule):
     """
     Creates viral short-form reels from long-form video content.
+
+    This module implements an automated pipeline for transforming long-form videos
+    into engaging, viral-ready short-form content (TikTok, Instagram Reels, YouTube Shorts).
+
+    Features:
+        - **GPU-accelerated transcription**: Uses faster-whisper with CUDA support
+          for real-time audio transcription with word-level timestamps.
+        - **AI-powered viral moment detection**: Leverages Ollama LLMs to analyze
+          transcripts and identify high-engagement segments.
+        - **Smart face tracking**: YOLOv8 person detection for intelligent 9:16 cropping.
+        - **Hormozi-style editing**: Dynamic zoom cuts, silence removal, and audio
+          normalization for maximum viewer retention.
+        - **Word-synced subtitles**: Auto-generated captions synced to speech.
+        - **Premiere Pro export**: Generates FCP XML for manual fine-tuning.
+
+    Example:
+        >>> from core.jarvis import get_jarvis
+        >>> jarvis = get_jarvis()
+        >>> result = jarvis.process(
+        ...     "Create viral reels from this video",
+        ...     video_path="/path/to/video.mp4",
+        ...     output_dir="/path/to/output",
+        ...     num_reels=5
+        ... )
+        >>> print(result.data["reels"])  # List of generated reel paths
+
+    Configuration:
+        All settings are controlled via ``config.settings``:
+        - ``target_reels``: Number of reels to generate (default: 8)
+        - ``min_reel_duration`` / ``max_reel_duration``: Clip length bounds (15-40s)
+        - ``output_width`` / ``output_height``: Output resolution (1080x1920)
+        - ``whisper_model``: Transcription model (default: "large-v3")
+        - ``ollama_model``: LLM for viral detection (default: "llama3.1:8b")
+
+    Pipeline Steps:
+        1. **Analyze video** - Extract metadata (duration, resolution, FPS)
+        2. **Transcribe** - GPU-accelerated speech-to-text with word timestamps
+        3. **Find viral moments** - AI analysis for high-engagement segments
+        4. **Detect faces** - YOLOv8 person tracking for smart cropping
+        5. **Generate reels** - FFmpeg processing with effects and subtitles
+        6. **Export XML** - Premiere Pro project file for further editing
+
+    Attributes:
+        transcriber: Cached faster-whisper model instance (lazy-loaded).
+        yolo_model: Cached YOLOv8 model instance (lazy-loaded).
+        TASK_KEYWORDS: List of keywords that trigger this module.
     """
 
     name = "video_editor"
     description = "Creates viral short-form content from long videos"
     version = "0.1.0"
 
-    # Keywords that indicate video editing task
-    TASK_KEYWORDS = [
+    #: Keywords that indicate this module should handle the task
+    TASK_KEYWORDS: list[str] = [
         "video", "reel", "clip", "edit", "cut", "shorts", "tiktok",
         "instagram", "youtube shorts", "viral", "transcribe"
     ]
 
-    def __init__(self):
+    def __init__(self) -> None:
+        """Initialize the VideoEditorModule.
+
+        Models (Whisper, YOLO) are lazy-loaded on first use to minimize startup time.
+        """
         super().__init__()
         self.transcriber = None
         self.yolo_model = None
 
     def can_handle(self, task: str) -> bool:
-        """Check if this is a video editing task"""
+        """Check if this module can handle the given task.
+
+        Performs case-insensitive keyword matching against TASK_KEYWORDS.
+
+        Args:
+            task: The task description string from the user.
+
+        Returns:
+            True if any video-related keyword is found in the task.
+        """
         task_lower = task.lower()
         return any(kw in task_lower for kw in self.TASK_KEYWORDS)
 
     def validate_inputs(self, **kwargs) -> tuple[bool, Optional[str]]:
-        """Validate video file exists"""
+        """Validate that required inputs are present and valid.
+
+        Args:
+            **kwargs: Task parameters. Required:
+                - video_path: Path to the source video file.
+
+        Returns:
+            A tuple of (is_valid, error_message). If valid, error_message is None.
+        """
         video_path = kwargs.get("video_path")
         if not video_path:
             return False, "video_path is required"
@@ -103,7 +178,32 @@ class VideoEditorModule(BaseModule):
         return True, None
 
     def execute(self, task: str, **kwargs) -> TaskResult:
-        """Execute video editing pipeline"""
+        """Execute the full video editing pipeline.
+
+        This is the main entry point for video processing. It runs all pipeline
+        stages sequentially and returns the generated reels.
+
+        Args:
+            task: The task description (used for logging).
+            **kwargs: Pipeline parameters:
+                - video_path (str | Path): Path to source video. **Required**.
+                - output_dir (str | Path): Directory for output files.
+                  Defaults to ``settings.output_dir``.
+                - num_reels (int): Number of reels to generate.
+                  Defaults to ``settings.target_reels``.
+
+        Returns:
+            TaskResult with:
+                - success: True if all reels were generated successfully.
+                - data: Dict containing:
+                    - reels: List of output file paths.
+                    - xml_project: Path to Premiere Pro XML file.
+                    - moments: List of detected viral moments with timestamps.
+                - error: Error message if processing failed.
+
+        Raises:
+            RuntimeError: If required dependencies (faster-whisper, ollama) are missing.
+        """
         video_path = Path(kwargs["video_path"])
         output_dir = Path(kwargs.get("output_dir", settings.output_dir))
         num_reels = kwargs.get("num_reels", settings.target_reels)
@@ -174,7 +274,7 @@ class VideoEditorModule(BaseModule):
             traceback.print_exc()
             return TaskResult(success=False, error=str(e))
 
-    def _get_video_info(self, video_path: Path) -> dict:
+    def _get_video_info(self, video_path: Path) -> VideoInfo:
         """Get video metadata using ffprobe"""
         cmd = [
             "ffprobe", "-v", "quiet", "-print_format", "json",
@@ -409,7 +509,7 @@ Return ONLY the JSON array, no other text."""
         moment: ViralMoment,
         words: list[Word],
         face_data: list[FaceDetection],
-        video_info: dict
+        video_info: VideoInfo
     ) -> None:
         """Create a single reel with all effects"""
 

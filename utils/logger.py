@@ -2,7 +2,7 @@
 JARVIS Logging - Clean, informative logs
 """
 import sys
-from loguru import logger
+from loguru import logger, Logger
 from pathlib import Path
 
 # Remove default handler
@@ -30,6 +30,13 @@ logger.add(
 )
 
 
-def get_logger(name: str):
-    """Get a logger with module name"""
+def get_logger(name: str) -> Logger:
+    """Get a logger with module name.
+
+    Args:
+        name: The module name to bind to log messages.
+
+    Returns:
+        A Loguru logger instance bound with the given module name.
+    """
     return logger.bind(name=name)

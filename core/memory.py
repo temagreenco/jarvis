@@ -4,11 +4,20 @@ JARVIS Memory System - Learn from past tasks
 import json
 from pathlib import Path
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Optional, TypedDict
 from dataclasses import dataclass, asdict, field
 from utils.logger import get_logger
 
 logger = get_logger("memory")
+
+
+class MemoryStatsDict(TypedDict):
+    """Type definition for memory statistics."""
+    total_tasks: int
+    successes: int
+    failures: int
+    success_rate: float
+    modules_used: list[str]
 
 
 @dataclass
@@ -103,7 +112,7 @@ class Memory:
         failures = [e for e in self.entries if not e.success]
         return list(reversed(failures[-limit:]))
 
-    def get_stats(self) -> dict:
+    def get_stats(self) -> MemoryStatsDict:
         """Get memory statistics"""
         total = len(self.entries)
         successes = sum(1 for e in self.entries if e.success)
@@ -111,6 +120,6 @@ class Memory:
             "total_tasks": total,
             "successes": successes,
             "failures": total - successes,
-            "success_rate": successes / total if total > 0 else 0,
+            "success_rate": successes / total if total > 0 else 0.0,
             "modules_used": list(set(e.module for e in self.entries))
         }

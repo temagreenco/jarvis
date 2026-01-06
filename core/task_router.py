@@ -2,7 +2,7 @@
 Task Router - Routes tasks to appropriate modules
 """
 from typing import Optional
-from modules.base_module import BaseModule, TaskResult
+from modules.base_module import BaseModule, TaskResult, ModuleStatusDict
 from utils.logger import get_logger
 
 logger = get_logger("task_router")
@@ -61,6 +61,6 @@ class TaskRouter:
         logger.info(f"Routing task to: {handler.name}")
         return handler.run(task, **kwargs)
 
-    def list_modules(self) -> list[dict]:
+    def list_modules(self) -> list[ModuleStatusDict]:
         """List all registered modules"""
         return [module.get_status() for module in self.modules.values()]

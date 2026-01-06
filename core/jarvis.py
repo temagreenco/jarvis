@@ -2,14 +2,20 @@
 JARVIS Core - The Brain
 Central orchestrator for all capabilities.
 """
-from typing import Optional
-from pathlib import Path
+from typing import Optional, TypedDict
 
 from core.task_router import TaskRouter
-from core.memory import Memory
-from modules.base_module import TaskResult
+from core.memory import Memory, MemoryStatsDict
+from modules.base_module import TaskResult, ModuleStatusDict
 from config.settings import settings
 from utils.logger import get_logger
+
+
+class JarvisStatusDict(TypedDict):
+    """Type definition for JARVIS system status."""
+    initialized: bool
+    modules: list[ModuleStatusDict]
+    memory_stats: MemoryStatsDict
 
 logger = get_logger("jarvis")
 
@@ -76,7 +82,7 @@ class Jarvis:
 
         return result
 
-    def get_status(self) -> dict:
+    def get_status(self) -> JarvisStatusDict:
         """Get JARVIS system status"""
         return {
             "initialized": self._initialized,
