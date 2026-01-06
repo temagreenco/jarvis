@@ -2,8 +2,12 @@
 JARVIS Logging - Clean, informative logs
 """
 import sys
-from loguru import logger, Logger
+from typing import TYPE_CHECKING
+from loguru import logger
 from pathlib import Path
+
+if TYPE_CHECKING:
+    from loguru import Logger
 
 # Remove default handler
 logger.remove()
@@ -30,7 +34,7 @@ logger.add(
 )
 
 
-def get_logger(name: str) -> Logger:
+def get_logger(name: str) -> "Logger":
     """Get a logger with module name.
 
     Args:
