@@ -1,0 +1,30 @@
+# Core
+python-dotenv>=1.0.0
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+rich>=13.0.0
+typer>=0.9.0
+
+# AI/ML
+ollama>=0.1.0
+faster-whisper>=1.0.0
+ultralytics>=8.0.0
+torch>=2.0.0
+numpy>=1.24.0
+
+# Video Processing
+ffmpeg-python>=0.2.0
+opencv-python>=4.8.0
+Pillow>=10.0.0
+
+# Communication
+python-telegram-bot>=20.0
+
+# Async
+aiohttp>=3.9.0
+aiofiles>=23.0.0
+
+# Utils
+tqdm>=4.65.0
+loguru>=0.7.0
+tenacity>=8.2.0
