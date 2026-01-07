@@ -669,48 +669,79 @@ Return ONLY the JSON array, no other text."""
         return text
 
     def _create_subtitle_filter(self, words: list[Word], offset: float) -> str:
-        """Create drawtext filter for word-synced subtitles - bold, no punctuation, bottom 1/3"""
+        """Create drawtext filter for word-synced subtitles - Opus Clip style
+
+        Key features (like pro tools):
+        1. Seamless transitions - each subtitle ends when next starts
+        2. No gaps - continuous subtitle display during speech
+        3. Minimum display time - prevents flashing
+        4. Small transition overlap - no blank frames
+        """
         if not words:
             return ""
 
-        filters = []
         chunk_size = settings.subtitle_words_per_chunk
         font_path = self._find_font()
+        sub_offset = getattr(settings, 'subtitle_offset', 0)
+        min_display_time = 0.4  # Minimum time to show each subtitle
+        transition_overlap = 0.05  # Small overlap to prevent blank frames
 
         # Bolder settings
-        font_size = settings.subtitle_font_size + 10  # Bigger
-        stroke_width = settings.subtitle_stroke_width + 2  # Bolder outline
+        font_size = settings.subtitle_font_size + 10
+        stroke_width = settings.subtitle_stroke_width + 2
 
+        # Build chunks first
+        chunks = []
         for i in range(0, len(words), chunk_size):
-            chunk = words[i:i+chunk_size]
-            text = " ".join(w.text for w in chunk)
-
-            # Clean text: remove punctuation, uppercase
+            chunk_words = words[i:i+chunk_size]
+            text = " ".join(w.text for w in chunk_words)
             text = self._clean_subtitle_text(text)
             if not text:
                 continue
 
-            # Escape special characters for FFmpeg drawtext (after cleaning)
+            # Escape for FFmpeg
             text = text.replace("\\", "\\\\").replace("'", "'\\''").replace(":", "\\:").replace("%", "\\%")
 
-            # Apply subtitle timing offset (negative = show earlier for lip sync)
-            sub_offset = getattr(settings, 'subtitle_offset', 0)
-            duration_buffer = getattr(settings, 'subtitle_duration_buffer', 0.3)
-            start = chunk[0].start - offset + sub_offset
-            end = chunk[-1].end - offset + sub_offset + duration_buffer  # Extend display time
+            chunks.append({
+                'text': text,
+                'start': chunk_words[0].start,
+                'end': chunk_words[-1].end
+            })
+
+        if not chunks:
+            return ""
+
+        # Calculate seamless timings (each ends when next starts)
+        filters = []
+        for i, chunk in enumerate(chunks):
+            # Start time with offset
+            start = chunk['start'] - offset + sub_offset
+
+            # End time: when next chunk starts (seamless) or word end + buffer for last
+            if i < len(chunks) - 1:
+                # End when next subtitle starts (+ small overlap for smooth transition)
+                next_start = chunks[i + 1]['start'] - offset + sub_offset
+                end = next_start + transition_overlap
+            else:
+                # Last subtitle: use word end time + buffer
+                end = chunk['end'] - offset + sub_offset + 0.3
+
+            # Ensure minimum display time
+            if end - start < min_display_time:
+                end = start + min_display_time
+
             # Ensure start isn't negative
             start = max(0, start)
 
-            # Use fontfile if found, otherwise use font name as fallback
+            # Font clause
             if font_path:
                 font_clause = f"fontfile='{font_path}':"
             else:
                 font_clause = f"font='{settings.subtitle_font}':"
 
-            # Use subtitle_position_y from settings (default 0.82 = bottom 1/3)
             pos_y = getattr(settings, 'subtitle_position_y', 0.82)
             filters.append(
-                f"drawtext=text='{text}':"
+                f"drawtext=text='{chunk['text']}':"
                 f"{font_clause}"
                 f"fontsize={font_size}:"
                 f"fontcolor={settings.subtitle_color}:"
