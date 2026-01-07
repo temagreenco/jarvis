@@ -580,7 +580,14 @@ Return ONLY the JSON array, no other text."""
             start = chunk[0].start - offset
             end = chunk[-1].end - offset
 
-            font_clause = f"fontfile='{font_path}':" if font_path else ""
+            # Use fontfile if found, otherwise use font name as fallback
+            if font_path:
+                font_clause = f"fontfile='{font_path}':"
+            else:
+                font_clause = f"font='{settings.subtitle_font}':"
+
+            # Use subtitle_position_y from settings (default 0.82 = bottom 1/3)
+            pos_y = getattr(settings, 'subtitle_position_y', 0.82)
             filters.append(
                 f"drawtext=text='{text}':"
                 f"{font_clause}"
@@ -588,7 +595,7 @@ Return ONLY the JSON array, no other text."""
                 f"fontcolor={settings.subtitle_color}:"
                 f"bordercolor={settings.subtitle_stroke_color}:"
                 f"borderw={stroke_width}:"
-                f"x=(w-text_w)/2:y=h*0.82:"  # Bottom 1/3 area (above safe zone)
+                f"x=(w-text_w)/2:y=h*{pos_y}:"
                 f"enable='between(t,{start:.3f},{end:.3f})'"
             )
 
@@ -626,7 +633,10 @@ Return ONLY the JSON array, no other text."""
             hook_escaped = hook_clean.replace("\\", "\\\\").replace("'", "'\\''").replace(":", "\\:").replace("%", "\\%")
 
             font_path = self._find_font()
-            font_clause = f"fontfile='{font_path}':" if font_path else ""
+            if font_path:
+                font_clause = f"fontfile='{font_path}':"
+            else:
+                font_clause = f"font='{settings.subtitle_font}':"
 
             # Hook displayed prominently in center for first 2.5s
             video_filters.append(
