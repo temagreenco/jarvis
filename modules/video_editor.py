@@ -597,6 +597,19 @@ Return ONLY the JSON array, no other text."""
         text = text.upper().strip()
         # Remove extra spaces
         text = " ".join(text.split())
+
+        # Add letter spacing (thin spaces between characters)
+        letter_spacing = getattr(settings, 'subtitle_letter_spacing', 0)
+        if letter_spacing > 0 and text:
+            # Insert thin spaces between each character (except spaces)
+            spaced_chars = []
+            for i, char in enumerate(text):
+                spaced_chars.append(char)
+                # Add thin space after each char except last and before spaces
+                if i < len(text) - 1 and char != ' ' and text[i+1] != ' ':
+                    spaced_chars.append(' ' * letter_spacing)
+            text = ''.join(spaced_chars)
+
         return text
 
     def _create_subtitle_filter(self, words: list[Word], offset: float) -> str:
