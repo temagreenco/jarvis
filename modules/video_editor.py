@@ -138,6 +138,7 @@ class VideoEditorModule(BaseModule):
             # Step 1: Get video info
             self.logger.info("[1/7] Analyzing video...")
             video_info = self._get_video_info(video_path)
+            video_info_2 = None  # Initialize for single camera mode
             self.logger.info(f"Duration: {video_info['duration']:.1f}s, Resolution: {video_info['width']}x{video_info['height']}")
 
             if multi_cam:
@@ -194,6 +195,7 @@ class VideoEditorModule(BaseModule):
                     face_data=face_data.get(i, []),
                     face_data_2=face_data_2.get(i, []),
                     video_info=video_info,
+                    video_info_2=video_info_2 if multi_cam else None,
                     camera_cuts=camera_cuts.get(i, [])
                 )
                 reel_paths.append(reel_path)
@@ -596,6 +598,7 @@ Return ONLY the JSON array."""
         face_data: list[FaceDetection],
         face_data_2: list[FaceDetection],
         video_info: dict,
+        video_info_2: Optional[dict],
         camera_cuts: list[CameraCut]
     ) -> None:
         """Create a reel with multi-camera switching (no burned subtitles)"""
@@ -610,8 +613,9 @@ Return ONLY the JSON array."""
 
         # Calculate crop for camera 2 (if multi-cam)
         crop2 = crop1  # Default to same crop
-        if video_path_2 and face_data_2:
-            crop2 = self._calculate_crop(face_data_2, src_w, src_h, target_ratio)
+        if video_path_2 and video_info_2:
+            src_w2, src_h2 = video_info_2["width"], video_info_2["height"]
+            crop2 = self._calculate_crop(face_data_2, src_w2, src_h2, target_ratio)
 
         # Build filter complex
         if video_path_2 and camera_cuts:
