@@ -306,7 +306,7 @@ class VideoEditorModule(BaseModule):
                 )
 
                 # Generate thumbnail (at 30% into the reel)
-                self._extract_thumbnail(reel_path, thumb_path)
+                thumb_result = self._extract_thumbnail(reel_path, thumb_path)
 
                 # Generate SRT file (with adjusted timestamps)
                 adjusted_words = [
@@ -317,7 +317,7 @@ class VideoEditorModule(BaseModule):
 
                 reel_data.append({
                     "video": str(reel_path),
-                    "thumbnail": str(thumb_path),
+                    "thumbnail": str(thumb_path) if thumb_result else None,
                     "srt": str(srt_path),
                     "moment": moment
                 })
@@ -496,12 +496,22 @@ Return ONLY the JSON array, no other text."""
 
             moments = []
             for m in moments_data[:num_moments]:
+                # Calculate score breakdown for AI-detected moments too
+                moment_text = m.get("hook", "") or m.get("reason", "")
+                _, breakdown = calculate_virality_score(moment_text)
+
                 moments.append(ViralMoment(
                     start=float(m["start"]),
                     end=float(m["end"]),
-                    score=float(m.get("score", 5)),
+                    score=float(m.get("score", 5)) * 10,  # AI returns 1-10, normalize to 0-100
                     reason=m.get("reason", ""),
-                    hook=m.get("hook", "")
+                    hook=m.get("hook", ""),
+                    hook_score=breakdown['hook_score'],
+                    content_score=breakdown['content_score'],
+                    energy_score=breakdown['energy_score'],
+                    ending_score=breakdown['ending_score'],
+                    detected_hooks=breakdown['detected_hooks'],
+                    detected_triggers=breakdown['detected_triggers']
                 ))
 
             # Sort by score (best first)
