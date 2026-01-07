@@ -64,6 +64,10 @@ class Settings(BaseSettings):
     audio_codec: str = "aac"
     audio_bitrate: str = "192k"
 
+    # Chat Settings
+    chat_max_history: int = 50  # Max messages to keep in conversation history
+    chat_default_system_prompt: Optional[str] = None  # Custom default system prompt
+
     # Telegram Bot
     telegram_token: Optional[str] = None
     telegram_allowed_users: list[int] = Field(default_factory=list)
