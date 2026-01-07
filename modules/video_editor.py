@@ -776,11 +776,10 @@ Return ONLY the JSON array, no other text."""
 
         video_chain = ",".join(video_filters) + "[outv]"
 
-        # Audio processing: silence removal + loudness normalization
-        # 1. Remove silences > 300ms (retention booster)
-        # 2. Normalize to -16 LUFS (streaming standard)
+        # Audio processing: loudness normalization only
+        # Note: silenceremove disabled because it breaks subtitle sync
+        # (audio duration changes but subtitle timings stay fixed)
         audio_filters = [
-            "silenceremove=start_periods=1:start_threshold=-40dB:start_silence=0.3:stop_periods=-1:stop_threshold=-40dB:stop_silence=0.3",
             "loudnorm=I=-16:TP=-1.5:LRA=11"  # Broadcast standard normalization
         ]
         audio_chain = ",".join(audio_filters) + "[outa]"
