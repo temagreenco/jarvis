@@ -181,14 +181,47 @@ class VideoEditorModule(BaseModule):
             "-show_format", "-show_streams", str(video_path)
         ]
         result = subprocess.run(cmd, capture_output=True, text=True)
-        data = json.loads(result.stdout)
 
-        video_stream = next(s for s in data["streams"] if s["codec_type"] == "video")
+        if result.returncode != 0 or not result.stdout:
+            raise RuntimeError(f"ffprobe failed for {video_path}: {result.stderr}")
+
+        try:
+            data = json.loads(result.stdout)
+        except json.JSONDecodeError as e:
+            raise RuntimeError(f"Failed to parse ffprobe output: {e}")
+
+        # Find video stream
+        video_stream = None
+        for s in data.get("streams", []):
+            if s.get("codec_type") == "video":
+                video_stream = s
+                break
+
+        if not video_stream:
+            raise RuntimeError(f"No video stream found in {video_path}")
+
+        # Parse frame rate safely (avoid eval)
+        fps_str = video_stream.get("r_frame_rate", "30/1")
+        try:
+            if "/" in fps_str:
+                num, den = fps_str.split("/")
+                fps = float(num) / float(den) if float(den) != 0 else 30.0
+            else:
+                fps = float(fps_str)
+        except (ValueError, ZeroDivisionError):
+            fps = 30.0
+
+        width = int(video_stream.get("width", 0))
+        height = int(video_stream.get("height", 0))
+
+        if width <= 0 or height <= 0:
+            raise RuntimeError(f"Invalid video dimensions: {width}x{height}")
+
         return {
-            "duration": float(data["format"]["duration"]),
-            "width": int(video_stream["width"]),
-            "height": int(video_stream["height"]),
-            "fps": eval(video_stream.get("r_frame_rate", "30/1")),
+            "duration": float(data["format"].get("duration", 0)),
+            "width": width,
+            "height": height,
+            "fps": fps,
         }
 
     def _transcribe(self, video_path: Path) -> list[Segment]:
@@ -358,11 +391,13 @@ Return ONLY the JSON array, no other text."""
 
         for i, moment in enumerate(moments):
             detections = []
-            # Sample frames throughout the moment
+            # Sample frames throughout the moment (clamp to valid range)
+            mid_time = (moment.start + moment.end) / 2
+            end_sample = max(moment.start, moment.end - 0.5)  # Don't go before start
             sample_times = [
                 moment.start,
-                (moment.start + moment.end) / 2,
-                moment.end - 0.5
+                mid_time,
+                end_sample
             ]
 
             for t in sample_times:
@@ -675,6 +710,9 @@ Return ONLY the JSON array, no other text."""
           <video>
             <track>
 '''
+        # Convert path to URL-safe format (forward slashes, proper encoding)
+        video_url = str(video_path.absolute()).replace("\\", "/")
+
         for i, moment in enumerate(moments):
             xml_content += f'''              <clipitem id="clip{i+1}">
                 <name>Reel {i+1}</name>
@@ -683,7 +721,7 @@ Return ONLY the JSON array, no other text."""
                 <in>{int(moment.start * 30)}</in>
                 <out>{int(moment.end * 30)}</out>
                 <file>
-                  <pathurl>file://{video_path}</pathurl>
+                  <pathurl>file:///{video_url}</pathurl>
                 </file>
               </clipitem>
 '''
