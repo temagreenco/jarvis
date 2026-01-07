@@ -509,17 +509,36 @@ Return ONLY the JSON array, no other text."""
 
     def _find_font(self) -> str:
         """Find an available font file for subtitles"""
-        font_paths = [
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-            "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
-            "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
-            "/System/Library/Fonts/Helvetica.ttc",  # macOS
-            "C\\:/Windows/Fonts/arial.ttf",  # Windows (escaped for FFmpeg)
-        ]
-        for path in font_paths:
-            if Path(path.replace("\\:", ":")).exists():
-                return path
-        # Fallback: use built-in sans font (may not work on all systems)
+        import platform
+        system = platform.system()
+
+        if system == "Windows":
+            # Windows font paths (check actual paths, return FFmpeg-escaped)
+            win_fonts = [
+                "C:/Windows/Fonts/arialbd.ttf",   # Arial Bold
+                "C:/Windows/Fonts/arial.ttf",     # Arial
+                "C:/Windows/Fonts/calibrib.ttf",  # Calibri Bold
+                "C:/Windows/Fonts/segoeui.ttf",   # Segoe UI
+            ]
+            for font in win_fonts:
+                if Path(font).exists():
+                    # Escape colon for FFmpeg drawtext filter
+                    return font.replace(":", "\\:")
+        else:
+            # Linux/macOS font paths
+            unix_fonts = [
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+                "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
+                "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
+                "/System/Library/Fonts/Helvetica.ttc",  # macOS
+                "/Library/Fonts/Arial Bold.ttf",  # macOS
+            ]
+            for font in unix_fonts:
+                if Path(font).exists():
+                    return font
+
+        # Fallback: let FFmpeg try to find a font
+        self.logger.warning("No font file found, FFmpeg will use default")
         return ""
 
     def _clean_subtitle_text(self, text: str) -> str:
@@ -556,8 +575,8 @@ Return ONLY the JSON array, no other text."""
             if not text:
                 continue
 
-            # Escape special characters for FFmpeg (after cleaning)
-            text = text.replace("\\", "\\\\").replace("'", "'\\''").replace(":", "\\:")
+            # Escape special characters for FFmpeg drawtext (after cleaning)
+            text = text.replace("\\", "\\\\").replace("'", "'\\''").replace(":", "\\:").replace("%", "\\%")
             start = chunk[0].start - offset
             end = chunk[-1].end - offset
 
@@ -598,11 +617,13 @@ Return ONLY the JSON array, no other text."""
             video_filters.append(subtitle_filter)
 
         # Add hook text overlay at the beginning (first 2.5 seconds)
-        if hook_text:
+        if hook_text and hook_text.strip():
             hook_clean = self._clean_subtitle_text(hook_text)
+            if not hook_clean:
+                hook_clean = "WATCH THIS"  # Fallback hook
             if len(hook_clean) > 50:
                 hook_clean = hook_clean[:50]  # Truncate long hooks
-            hook_escaped = hook_clean.replace("\\", "\\\\").replace("'", "'\\''").replace(":", "\\:")
+            hook_escaped = hook_clean.replace("\\", "\\\\").replace("'", "'\\''").replace(":", "\\:").replace("%", "\\%")
 
             font_path = self._find_font()
             font_clause = f"fontfile='{font_path}':" if font_path else ""
