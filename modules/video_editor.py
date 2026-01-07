@@ -411,7 +411,7 @@ Return ONLY the JSON array, no other text."""
         face_data: list[FaceDetection],
         video_info: dict
     ) -> None:
-        """Create a single reel with all effects"""
+        """Create a single reel with all effects including hook intro"""
 
         # Calculate crop region (center on face or center of frame)
         src_w, src_h = video_info["width"], video_info["height"]
@@ -419,12 +419,17 @@ Return ONLY the JSON array, no other text."""
         target_ratio = target_w / target_h  # 9:16 = 0.5625
 
         if face_data:
-            # Average face position
+            # Average face position - use top of detected person/face
             avg_x = sum(f.x + f.width/2 for f in face_data) / len(face_data)
-            avg_y = sum(f.y + f.height/2 for f in face_data) / len(face_data)
-            center_x, center_y = int(avg_x), int(avg_y)
+            # Get the top of the person (head area) - use y (top) not center
+            avg_face_top = sum(f.y for f in face_data) / len(face_data)
+            avg_face_height = sum(f.height for f in face_data) / len(face_data)
+            # Estimate head position (top 20% of detected person box)
+            head_y = avg_face_top + avg_face_height * 0.1
+            center_x = int(avg_x)
         else:
-            center_x, center_y = src_w // 2, src_h // 2
+            center_x = src_w // 2
+            head_y = src_h // 3  # Default to upper third
 
         # Calculate crop dimensions to get 9:16
         if src_w / src_h > target_ratio:
@@ -436,19 +441,26 @@ Return ONLY the JSON array, no other text."""
             crop_w = src_w
             crop_h = int(crop_w / target_ratio)
 
-        # Center crop on face/center, bounded to frame
+        # Position crop so head is at upper 1/3 of output frame
+        # Upper 1/3 line is at crop_h / 3 from top
+        # We want head_y (in source) to appear at crop_h/3 (in crop)
+        # So: crop_y + crop_h/3 = head_y  =>  crop_y = head_y - crop_h/3
+        desired_crop_y = int(head_y - crop_h / 3)
+        crop_y = max(0, min(desired_crop_y, src_h - crop_h))
+
+        # Center horizontally on subject
         crop_x = max(0, min(center_x - crop_w // 2, src_w - crop_w))
-        crop_y = max(0, min(center_y - crop_h // 2, src_h - crop_h))
 
         # Create subtitle filter
         subtitle_filter = self._create_subtitle_filter(words, moment.start)
 
-        # Build FFmpeg filter complex for Hormozi-style editing
+        # Build FFmpeg filter complex for Hormozi-style editing with hook
         filter_complex = self._build_filter_complex(
             crop_x, crop_y, crop_w, crop_h,
             target_w, target_h,
             moment.end - moment.start,
-            subtitle_filter
+            subtitle_filter,
+            hook_text=moment.hook  # Show hook at start of reel
         )
 
         # Build FFmpeg command with GPU encoding
@@ -510,8 +522,20 @@ Return ONLY the JSON array, no other text."""
         # Fallback: use built-in sans font (may not work on all systems)
         return ""
 
+    def _clean_subtitle_text(self, text: str) -> str:
+        """Remove punctuation and clean text for subtitles"""
+        # Remove common punctuation
+        punctuation = ".,;:!?'\"-/\\[](){}…"
+        for char in punctuation:
+            text = text.replace(char, "")
+        # Convert to uppercase for impact
+        text = text.upper().strip()
+        # Remove extra spaces
+        text = " ".join(text.split())
+        return text
+
     def _create_subtitle_filter(self, words: list[Word], offset: float) -> str:
-        """Create drawtext filter for word-synced subtitles"""
+        """Create drawtext filter for word-synced subtitles - bold, no punctuation, bottom 1/3"""
         if not words:
             return ""
 
@@ -519,11 +543,21 @@ Return ONLY the JSON array, no other text."""
         chunk_size = settings.subtitle_words_per_chunk
         font_path = self._find_font()
 
+        # Bolder settings
+        font_size = settings.subtitle_font_size + 10  # Bigger
+        stroke_width = settings.subtitle_stroke_width + 2  # Bolder outline
+
         for i in range(0, len(words), chunk_size):
             chunk = words[i:i+chunk_size]
             text = " ".join(w.text for w in chunk)
-            # Escape special characters for FFmpeg
-            text = text.replace("\\", "\\\\").replace("'", "'\\''").replace(":", "\\:").replace("[", "\\[").replace("]", "\\]")
+
+            # Clean text: remove punctuation, uppercase
+            text = self._clean_subtitle_text(text)
+            if not text:
+                continue
+
+            # Escape special characters for FFmpeg (after cleaning)
+            text = text.replace("\\", "\\\\").replace("'", "'\\''").replace(":", "\\:")
             start = chunk[0].start - offset
             end = chunk[-1].end - offset
 
@@ -531,11 +565,11 @@ Return ONLY the JSON array, no other text."""
             filters.append(
                 f"drawtext=text='{text}':"
                 f"{font_clause}"
-                f"fontsize={settings.subtitle_font_size}:"
+                f"fontsize={font_size}:"
                 f"fontcolor={settings.subtitle_color}:"
                 f"bordercolor={settings.subtitle_stroke_color}:"
-                f"borderw={settings.subtitle_stroke_width}:"
-                f"x=(w-text_w)/2:y=h*0.75:"
+                f"borderw={stroke_width}:"
+                f"x=(w-text_w)/2:y=h*0.82:"  # Bottom 1/3 area (above safe zone)
                 f"enable='between(t,{start:.3f},{end:.3f})'"
             )
 
@@ -546,35 +580,39 @@ Return ONLY the JSON array, no other text."""
         crop_x: int, crop_y: int, crop_w: int, crop_h: int,
         target_w: int, target_h: int,
         duration: float,
-        subtitle_filter: str
+        subtitle_filter: str,
+        hook_text: str = ""
     ) -> str:
-        """Build FFmpeg filter complex with Hormozi-style cuts"""
+        """Build FFmpeg filter complex with Hormozi-style cuts and hook intro"""
 
-        # Calculate zoom segments
+        # Calculate zoom segments - more aggressive Hormozi-style
         cut_interval = (settings.cut_interval_min + settings.cut_interval_max) / 2
         num_cuts = max(1, int(duration / cut_interval))
 
-        # Build zoom expression for Hormozi-style pulsing zoom
-        # Creates quick zoom pulses at cut intervals
+        # Build zoom expression for smooth Hormozi-style pulsing zoom
+        # Creates smooth zoom pulses that ease in/out at cut intervals
         zoom_factor = settings.zoom_factor
         zoom_exprs = []
         for i in range(num_cuts):
-            t_start = i * cut_interval
-            t_end = t_start + 0.15  # Quick 150ms zoom pulse
-            zoom_exprs.append(f"between(t,{t_start:.2f},{t_end:.2f})*{zoom_factor - 1}")
+            t_center = i * cut_interval + 0.1  # Center of zoom pulse
+            # Smooth pulse using triangle function for smoother zoom
+            # Peak zoom at t_center, returns to 1.0 over 0.3s
+            zoom_exprs.append(
+                f"(1-abs(t-{t_center:.2f})/0.15)*{zoom_factor - 1}*between(t,{t_center - 0.15:.2f},{t_center + 0.15:.2f})"
+            )
 
-        # Combine zoom expressions: base zoom (1) + pulse zooms
+        # Combine zoom expressions: base zoom (1) + smooth pulse zooms
         if zoom_exprs:
             zoom_expr = f"1+{'+'.join(zoom_exprs)}"
         else:
             zoom_expr = "1"
 
         # Build video filter chain
-        # 1. Crop to subject -> 2. Scale to target -> 3. Zoom pulses -> 4. Subtitles
+        # 1. Crop to subject -> 2. Scale to target -> 3. Zoom pulses -> 4. Subtitles -> 5. Hook overlay
         video_filters = [
             f"crop={crop_w}:{crop_h}:{crop_x}:{crop_y}",
             f"scale={target_w}:{target_h}:flags=lanczos",
-            # Apply zoom with expression - zoompan creates the pulsing effect
+            # Apply smooth zoom with expression
             f"zoompan=z='{zoom_expr}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s={target_w}x{target_h}:fps={settings.fps}"
         ]
 
@@ -582,10 +620,31 @@ Return ONLY the JSON array, no other text."""
         if subtitle_filter:
             video_filters.append(subtitle_filter)
 
+        # Add hook text overlay at the beginning (first 2.5 seconds)
+        if hook_text:
+            hook_clean = self._clean_subtitle_text(hook_text)
+            if len(hook_clean) > 50:
+                hook_clean = hook_clean[:50]  # Truncate long hooks
+            hook_escaped = hook_clean.replace("\\", "\\\\").replace("'", "'\\''").replace(":", "\\:")
+
+            font_path = self._find_font()
+            font_clause = f"fontfile='{font_path}':" if font_path else ""
+
+            # Hook displayed prominently in center for first 2.5s
+            video_filters.append(
+                f"drawtext=text='{hook_escaped}':"
+                f"{font_clause}"
+                f"fontsize=80:"
+                f"fontcolor=yellow:"
+                f"bordercolor=black:"
+                f"borderw=4:"
+                f"x=(w-text_w)/2:y=h*0.4:"
+                f"enable='between(t,0,2.5)'"
+            )
+
         video_chain = ",".join(video_filters) + "[outv]"
 
         # Audio processing: normalize (skip silence removal for cleaner output)
-        # Silence removal can cause sync issues, so we normalize only
         audio_filters = [
             "loudnorm=I=-16:TP=-1.5:LRA=11"  # Broadcast standard normalization
         ]
