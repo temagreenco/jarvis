@@ -68,6 +68,19 @@ class Settings(BaseSettings):
     telegram_token: Optional[str] = None
     telegram_allowed_users: list[int] = Field(default_factory=list)
 
+    # Chat Settings
+    chat_model: Optional[str] = None  # Uses ollama_model if not set
+    chat_temperature: float = 0.7
+    chat_max_tokens: int = 2048
+    chat_context_messages: int = 20  # Number of messages to keep in context
+    chat_system_prompt: str = """You are JARVIS, an advanced AI assistant. You are:
+- Helpful, knowledgeable, and efficient
+- Direct and concise in your responses
+- Capable of handling a wide variety of tasks
+- Proactive in offering solutions
+
+When you don't know something, admit it honestly. When you can help, do so thoroughly."""
+
     class Config:
         env_file = ".env"
         env_prefix = "JARVIS_"
