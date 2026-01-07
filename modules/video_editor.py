@@ -618,10 +618,13 @@ Return ONLY the JSON array."""
             crop2 = self._calculate_crop(face_data_2, src_w2, src_h2, target_ratio)
 
         # Build filter complex
+        # Create subtitle filter (burned in + SRT export)
+        subtitle_filter = self._create_subtitle_filter(words, moment.start)
+
         if video_path_2 and camera_cuts:
             # Multi-camera with cuts
             filter_complex = self._build_multicam_filter(
-                crop1, crop2, target_w, target_h, camera_cuts, duration
+                crop1, crop2, target_w, target_h, camera_cuts, duration, subtitle_filter
             )
             # Two input files
             cmd = [
@@ -636,7 +639,7 @@ Return ONLY the JSON array."""
         else:
             # Single camera
             filter_complex = self._build_single_cam_filter(
-                crop1, target_w, target_h, duration
+                crop1, target_w, target_h, duration, subtitle_filter
             )
             cmd = [
                 "ffmpeg", "-y",
@@ -718,19 +721,19 @@ Return ONLY the JSON array."""
         crop1: tuple, crop2: tuple,
         target_w: int, target_h: int,
         camera_cuts: list[CameraCut],
-        duration: float
+        duration: float,
+        subtitle_filter: str = ""
     ) -> str:
-        """Build FFmpeg filter for multi-camera switching"""
+        """Build FFmpeg filter for multi-camera switching with subtitles"""
         cx1, cy1, cw1, ch1 = crop1
         cx2, cy2, cw2, ch2 = crop2
 
-        # Process both cameras
+        # Process both cameras - crop and scale to same output size
         filters = []
         filters.append(f"[0:v]crop={cw1}:{ch1}:{cx1}:{cy1},scale={target_w}:{target_h}:flags=lanczos,fps={settings.fps}[cam0]")
         filters.append(f"[1:v]crop={cw2}:{ch2}:{cx2}:{cy2},scale={target_w}:{target_h}:flags=lanczos,fps={settings.fps}[cam1]")
 
         # Build camera switch timeline using overlay with enable
-        # Start with cam0 as base
         switch_expr_parts = []
         for cut in camera_cuts:
             t_start = cut.time
@@ -739,14 +742,17 @@ Return ONLY the JSON array."""
                 switch_expr_parts.append(f"between(t,{t_start:.3f},{t_end:.3f})")
 
         if switch_expr_parts:
-            # Overlay cam1 on cam0 when cam1 is active
             switch_expr = "+".join(switch_expr_parts)
             filters.append(f"[cam0][cam1]overlay=enable='{switch_expr}'[vmix]")
         else:
             filters.append("[cam0]copy[vmix]")
 
-        # Add visual enhancements
-        filters.append("[vmix]eq=contrast=1.08:saturation=1.10,unsharp=5:5:0.8:5:5:0.4[outv]")
+        # Add visual enhancements + subtitles
+        enhance = "eq=contrast=1.08:saturation=1.10,unsharp=5:5:0.8:5:5:0.4"
+        if subtitle_filter:
+            filters.append(f"[vmix]{enhance},{subtitle_filter}[outv]")
+        else:
+            filters.append(f"[vmix]{enhance}[outv]")
 
         # Audio from first source
         filters.append("[0:a]loudnorm=I=-16:TP=-1.5:LRA=11[outa]")
@@ -757,9 +763,10 @@ Return ONLY the JSON array."""
         self,
         crop: tuple,
         target_w: int, target_h: int,
-        duration: float
+        duration: float,
+        subtitle_filter: str = ""
     ) -> str:
-        """Build FFmpeg filter for single camera (no burned subtitles)"""
+        """Build FFmpeg filter for single camera with subtitles"""
         cx, cy, cw, ch = crop
 
         video_chain = (
@@ -769,6 +776,10 @@ Return ONLY the JSON array."""
             "eq=contrast=1.08:saturation=1.10,"
             "unsharp=5:5:0.8:5:5:0.4"
         )
+
+        # Add subtitles if available
+        if subtitle_filter:
+            video_chain += f",{subtitle_filter}"
 
         return f"[0:v]{video_chain}[outv];[0:a]loudnorm=I=-16:TP=-1.5:LRA=11[outa]"
 
@@ -916,37 +927,52 @@ Return ONLY the JSON array."""
                 raise RuntimeError(f"FFmpeg failed: {result.stderr}")
 
     def _find_font(self) -> str:
-        """Find an available font file for subtitles"""
+        """Find Rubik Black 900 font, with fallbacks"""
         import platform
         system = platform.system()
 
         if system == "Windows":
-            # Windows font paths (check actual paths, return FFmpeg-escaped)
+            # Windows font paths - prioritize Rubik Black
             win_fonts = [
+                # Rubik Black (900 weight) - preferred
+                "C:/Windows/Fonts/Rubik-Black.ttf",
+                "C:/Users/*/AppData/Local/Microsoft/Windows/Fonts/Rubik-Black.ttf",
+                # Fallbacks
                 "C:/Windows/Fonts/arialbd.ttf",   # Arial Bold
                 "C:/Windows/Fonts/arial.ttf",     # Arial
                 "C:/Windows/Fonts/calibrib.ttf",  # Calibri Bold
-                "C:/Windows/Fonts/segoeui.ttf",   # Segoe UI
             ]
             for font in win_fonts:
-                if Path(font).exists():
-                    # Escape colon for FFmpeg drawtext filter
+                # Handle wildcard for user fonts
+                if "*" in font:
+                    import glob
+                    matches = glob.glob(font)
+                    if matches:
+                        return matches[0].replace(":", "\\:")
+                elif Path(font).exists():
                     return font.replace(":", "\\:")
         else:
-            # Linux/macOS font paths
+            # Linux/macOS font paths - prioritize Rubik Black
             unix_fonts = [
+                # Rubik Black (900 weight) - preferred
+                "/usr/share/fonts/truetype/rubik/Rubik-Black.ttf",
+                "/usr/share/fonts/Rubik-Black.ttf",
+                "~/.fonts/Rubik-Black.ttf",
+                # macOS
+                "/Library/Fonts/Rubik-Black.ttf",
+                "~/Library/Fonts/Rubik-Black.ttf",
+                # Fallbacks
                 "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
                 "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
-                "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
-                "/System/Library/Fonts/Helvetica.ttc",  # macOS
-                "/Library/Fonts/Arial Bold.ttf",  # macOS
+                "/System/Library/Fonts/Helvetica.ttc",
             ]
             for font in unix_fonts:
-                if Path(font).exists():
-                    return font
+                font_path = Path(font).expanduser()
+                if font_path.exists():
+                    return str(font_path)
 
-        # Fallback: let FFmpeg try to find a font
-        self.logger.warning("No font file found, FFmpeg will use default")
+        # Fallback: let FFmpeg try to find a font by name
+        self.logger.warning("Rubik-Black not found, FFmpeg will use fallback font")
         return ""
 
     def _clean_subtitle_text(self, text: str) -> str:

@@ -42,18 +42,18 @@ class Settings(BaseSettings):
     output_height: int = 1920  # 9:16 vertical
     fps: int = 30
 
-    # Subtitle Settings
+    # Subtitle Settings - Rubik Black 900 style
     subtitle_words_per_chunk: int = 4  # 2-4 words per row
-    subtitle_font_size: int = 75  # Increased 25% (was 60)
-    subtitle_font: str = "Arial-Bold"
+    subtitle_font_size: int = 80  # Large for impact
+    subtitle_font: str = "Rubik-Black"  # Rubik Black 900 weight
     subtitle_color: str = "white"
     subtitle_highlight_color: str = "#FFFF00"  # Yellow highlight for current word
     subtitle_stroke_color: str = "black"
-    subtitle_stroke_width: int = 3
+    subtitle_stroke_width: int = 4  # Thicker outline for Rubik
     subtitle_shadow: bool = True
     subtitle_shadow_color: str = "#000000"
     subtitle_shadow_offset: int = 4
-    subtitle_position_y: float = 0.65  # Moved down 10% (was 0.55)
+    subtitle_position_y: float = 0.78  # Lower 1/3 grid position
     subtitle_offset: float = -0.50  # Show subtitles 500ms earlier (sync fix)
     subtitle_duration_buffer: float = 0.3  # Extend subtitle display by 300ms
     subtitle_letter_spacing: int = 0  # Disabled (was 1)
