@@ -71,11 +71,18 @@ class Settings(BaseSettings):
 
     # Telegram Bot
     telegram_token: Optional[str] = None
+    telegram_bot_token: Optional[str] = None  # Alternative name
     telegram_allowed_users: list[int] = Field(default_factory=list)
+
+    # API Settings
+    api_key: Optional[str] = None
+    require_auth: bool = False
+    bind_localhost: bool = True
 
     class Config:
         env_file = ".env"
         env_prefix = "JARVIS_"
+        extra = "ignore"  # Ignore unknown env vars
 
 
 # Global settings instance
