@@ -1,0 +1,30 @@
+# JARVIS RunPod Docker Image
+# For fast podcast video editing with GPU
+
+FROM runpod/pytorch:2.1.0-py3.10-cuda11.8.0-devel-ubuntu22.04
+
+WORKDIR /workspace
+
+# System deps
+RUN apt-get update && apt-get install -y \
+    ffmpeg \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Python deps
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Pre-download models for faster cold start
+RUN python -c "from faster_whisper import WhisperModel; WhisperModel('large-v3', device='cuda', compute_type='float16')"
+RUN python -c "from ultralytics import YOLO; YOLO('yolov8n.pt')"
+
+# Copy project
+COPY . /workspace/jarvis
+WORKDIR /workspace/jarvis
+
+# Create dirs
+RUN mkdir -p videos output
+
+# Default command
+CMD ["python", "-m", "jarvis", "--help"]
