@@ -14,12 +14,26 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, Generator
 import httpx
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from modules.base_module import BaseModule, TaskResult
 from config.settings import settings
 from utils.logger import get_logger
 
 logger = get_logger("chat")
+
+
+def check_ollama_available() -> tuple[bool, str]:
+    """Check if Ollama service is available"""
+    try:
+        with httpx.Client(timeout=5.0) as client:
+            response = client.get(f"{settings.ollama_host}/api/tags")
+            response.raise_for_status()
+            return True, "Ollama is available"
+    except httpx.ConnectError:
+        return False, f"Cannot connect to Ollama at {settings.ollama_host}"
+    except Exception as e:
+        return False, f"Ollama check failed: {e}"
 
 
 @dataclass
@@ -157,7 +171,11 @@ When you don't know something, admit it honestly. When you can help, do so thoro
     def __init__(self):
         super().__init__()
         self.store = ConversationStore()
-        self.system_prompt = settings.chat_system_prompt if hasattr(settings, 'chat_system_prompt') else self.DEFAULT_SYSTEM_PROMPT
+        self.system_prompt = getattr(settings, 'chat_system_prompt', None) or self.DEFAULT_SYSTEM_PROMPT
+
+    def is_available(self) -> tuple[bool, str]:
+        """Check if chat service is available"""
+        return check_ollama_available()
 
     def can_handle(self, task: str) -> bool:
         """Check if this is a chat/conversation task"""
@@ -184,8 +202,9 @@ When you don't know something, admit it honestly. When you can help, do so thoro
         if not messages or messages[0].get("role") != "system":
             messages = [{"role": "system", "content": self.system_prompt}] + messages
 
+        model = getattr(settings, 'chat_model', None) or settings.ollama_model
         payload = {
-            "model": settings.chat_model if hasattr(settings, 'chat_model') else settings.ollama_model,
+            "model": model,
             "messages": messages,
             "stream": stream,
             "options": {
@@ -199,8 +218,14 @@ When you don't know something, admit it honestly. When you can help, do so thoro
         else:
             return self._sync_response(url, payload)
 
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((httpx.ConnectError, httpx.TimeoutException)),
+        reraise=True
+    )
     def _sync_response(self, url: str, payload: dict) -> str:
-        """Get synchronous response from Ollama"""
+        """Get synchronous response from Ollama with retry logic"""
         try:
             with httpx.Client(timeout=120.0) as client:
                 response = client.post(url, json=payload)
@@ -213,6 +238,9 @@ When you don't know something, admit it honestly. When you can help, do so thoro
         except httpx.HTTPStatusError as e:
             logger.error(f"Ollama HTTP error: {e}")
             raise RuntimeError(f"Chat service error: {e.response.status_code}")
+        except httpx.ConnectError:
+            logger.error(f"Cannot connect to Ollama at {settings.ollama_host}")
+            raise RuntimeError(f"Cannot connect to Ollama. Is it running at {settings.ollama_host}?")
         except Exception as e:
             logger.error(f"Ollama error: {e}")
             raise RuntimeError(f"Failed to get response: {e}")
@@ -293,7 +321,7 @@ When you don't know something, admit it honestly. When you can help, do so thoro
                     "message_count": len(conversation.messages)
                 },
                 metadata={
-                    "model": getattr(settings, 'chat_model', settings.ollama_model),
+                    "model": getattr(settings, 'chat_model', None) or settings.ollama_model,
                     "conversation_id": conversation_id
                 }
             )
