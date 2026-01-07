@@ -456,17 +456,36 @@ Return ONLY the JSON array, no other text."""
         target_ratio = target_w / target_h  # 9:16 = 0.5625
 
         if face_data:
-            # Average face position - use top of detected person/face
-            avg_x = sum(f.x + f.width/2 for f in face_data) / len(face_data)
-            # Get the top of the person (head area) - use y (top) not center
-            avg_face_top = sum(f.y for f in face_data) / len(face_data)
-            avg_face_height = sum(f.height for f in face_data) / len(face_data)
-            # Estimate head position (top 20% of detected person box)
-            head_y = avg_face_top + avg_face_height * 0.1
+            # Filter detections by confidence (keep only strong detections)
+            strong_detections = [f for f in face_data if f.confidence > 0.5]
+            if not strong_detections:
+                strong_detections = face_data
+
+            # Use weighted average by confidence
+            total_conf = sum(f.confidence for f in strong_detections)
+            if total_conf > 0:
+                avg_x = sum((f.x + f.width/2) * f.confidence for f in strong_detections) / total_conf
+                avg_face_top = sum(f.y * f.confidence for f in strong_detections) / total_conf
+                avg_face_height = sum(f.height * f.confidence for f in strong_detections) / total_conf
+            else:
+                avg_x = sum(f.x + f.width/2 for f in strong_detections) / len(strong_detections)
+                avg_face_top = sum(f.y for f in strong_detections) / len(strong_detections)
+                avg_face_height = sum(f.height for f in strong_detections) / len(strong_detections)
+
+            # Head is at top 15-25% of person bounding box (YOLO detects full body)
+            head_y = avg_face_top + avg_face_height * 0.2
             center_x = int(avg_x)
+
+            # Safety: ensure center_x is not too close to edges
+            min_margin = src_w * 0.15  # 15% margin from edges
+            center_x = max(min_margin, min(center_x, src_w - min_margin))
+
+            self.logger.debug(f"Face detection: center_x={center_x}, head_y={head_y}, detections={len(strong_detections)}")
         else:
+            # No detection - use center of frame
             center_x = src_w // 2
             head_y = src_h // 3  # Default to upper third
+            self.logger.debug("No face detected, using center crop")
 
         # Calculate crop dimensions to get 9:16
         if src_w / src_h > target_ratio:
@@ -485,8 +504,18 @@ Return ONLY the JSON array, no other text."""
         desired_crop_y = int(head_y - crop_h / 3)
         crop_y = max(0, min(desired_crop_y, src_h - crop_h))
 
-        # Center horizontally on subject
-        crop_x = max(0, min(center_x - crop_w // 2, src_w - crop_w))
+        # Center horizontally on subject with safety check
+        desired_crop_x = int(center_x - crop_w // 2)
+        crop_x = max(0, min(desired_crop_x, src_w - crop_w))
+
+        # Safety check: if crop would cut off too much, fall back to center
+        # This helps when person is at edge of frame
+        if face_data:
+            # Check if the detected person center is within the crop
+            person_in_crop = (crop_x < center_x < crop_x + crop_w)
+            if not person_in_crop:
+                self.logger.warning(f"Person may be cut off, centering crop")
+                crop_x = max(0, min(src_w // 2 - crop_w // 2, src_w - crop_w))
 
         # Create subtitle filter
         subtitle_filter = self._create_subtitle_filter(words, moment.start)
