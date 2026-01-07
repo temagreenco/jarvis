@@ -72,7 +72,7 @@ class VideoEditorModule(BaseModule):
 
     name = "video_editor"
     description = "Creates viral short-form content from long videos"
-    version = "0.1.0"
+    version = "0.2.0"
 
     # Keywords that indicate video editing task
     TASK_KEYWORDS = [
@@ -485,7 +485,7 @@ Return ONLY the JSON array, no other text."""
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
             # Try with CPU encoding as fallback
-            self.logger.warning(f"GPU encoding failed: {result.stderr[:200]}, trying CPU...")
+            self.logger.warning(f"GPU encoding failed: {result.stderr[:200] if result.stderr else 'No error'}, trying CPU...")
             # Rebuild command for CPU encoding
             cmd_cpu = [
                 "ffmpeg", "-y",
@@ -587,8 +587,6 @@ Return ONLY the JSON array, no other text."""
 
         # Build video filter chain
         # 1. Crop to subject -> 2. Scale to target -> 3. Subtitles -> 4. Hook overlay
-        # Note: Removed zoompan as it's causing FFmpeg expression parsing issues
-        # TODO: Re-add zoom with simpler approach (scale-based or separate filter)
         video_filters = [
             f"crop={crop_w}:{crop_h}:{crop_x}:{crop_y}",
             f"scale={target_w}:{target_h}:flags=lanczos",
