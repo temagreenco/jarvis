@@ -39,7 +39,7 @@ def status():
         f"""[bold green]JARVIS Status[/bold green]
 
 [bold]Initialized:[/bold] {status_info['initialized']}
-[bold]Active Modules:[/bold] {', '.join(status_info['modules']) if status_info['modules'] else 'None'}
+[bold]Active Modules:[/bold] {', '.join(m['name'] if isinstance(m, dict) else m for m in status_info['modules']) if status_info['modules'] else 'None'}
 
 [bold]Memory Stats:[/bold]
   • Total Tasks: {status_info['memory_stats'].get('total_tasks', 0)}

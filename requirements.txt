@@ -19,6 +19,7 @@ Pillow>=10.0.0
 
 # Communication
 python-telegram-bot>=20.0
+httpx>=0.25.0
 
 # Async
 aiohttp>=3.9.0
