@@ -76,7 +76,7 @@ class Settings(BaseSettings):
 
     # FFmpeg Settings
     ffmpeg_preset: str = "p4"  # NVENC preset: p1(fastest) to p7(quality)
-    ffmpeg_crf: int = 23
+    ffmpeg_crf: int = 18  # Higher quality for social media (18 = good, 23 = standard)
     crf: int = 20  # Alias for preset system
     preset: str = "medium"  # libx264 preset
     video_codec: str = "h264_nvenc"  # GPU encoding

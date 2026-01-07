@@ -499,6 +499,7 @@ Return ONLY the JSON array, no other text."""
         )
 
         # Build FFmpeg command with GPU encoding
+        # Social media requirements: yuv420p + bt709 color space
         cmd = [
             "ffmpeg", "-y",
             "-ss", str(moment.start),
@@ -510,6 +511,10 @@ Return ONLY the JSON array, no other text."""
             "-c:v", settings.video_codec,
             "-preset", settings.ffmpeg_preset,
             "-crf", str(settings.ffmpeg_crf),
+            "-pix_fmt", "yuv420p",  # Required for social platforms
+            "-colorspace", "bt709",  # SDR color space
+            "-color_primaries", "bt709",
+            "-color_trc", "bt709",
             "-c:a", settings.audio_codec,
             "-b:a", settings.audio_bitrate,
             "-movflags", "+faststart",
@@ -521,7 +526,7 @@ Return ONLY the JSON array, no other text."""
         if result.returncode != 0:
             # Try with CPU encoding as fallback
             self.logger.warning(f"GPU encoding failed: {result.stderr[:200] if result.stderr else 'No error'}, trying CPU...")
-            # Rebuild command for CPU encoding
+            # Rebuild command for CPU encoding with social media requirements
             cmd_cpu = [
                 "ffmpeg", "-y",
                 "-ss", str(moment.start),
@@ -531,8 +536,12 @@ Return ONLY the JSON array, no other text."""
                 "-map", "[outv]",
                 "-map", "[outa]",
                 "-c:v", "libx264",
-                "-preset", "medium",
-                "-crf", str(settings.ffmpeg_crf),
+                "-preset", "fast",  # Faster than medium, good quality
+                "-crf", "18",  # Higher quality for social (was 23)
+                "-pix_fmt", "yuv420p",  # Required for social platforms
+                "-colorspace", "bt709",  # SDR color space
+                "-color_primaries", "bt709",
+                "-color_trc", "bt709",
                 "-c:a", settings.audio_codec,
                 "-b:a", settings.audio_bitrate,
                 "-movflags", "+faststart",
@@ -687,8 +696,11 @@ Return ONLY the JSON array, no other text."""
 
         video_chain = ",".join(video_filters) + "[outv]"
 
-        # Audio processing: normalize
+        # Audio processing: silence removal + loudness normalization
+        # 1. Remove silences > 300ms (retention booster)
+        # 2. Normalize to -16 LUFS (streaming standard)
         audio_filters = [
+            "silenceremove=start_periods=1:start_threshold=-40dB:start_silence=0.3:stop_periods=-1:stop_threshold=-40dB:stop_silence=0.3",
             "loudnorm=I=-16:TP=-1.5:LRA=11"  # Broadcast standard normalization
         ]
         audio_chain = ",".join(audio_filters) + "[outa]"
