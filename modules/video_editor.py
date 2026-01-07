@@ -375,17 +375,15 @@ Return ONLY the JSON array, no other text."""
         return moments[:num_moments]
 
     def _detect_faces(self, video_path: Path, moments: list[ViralMoment]) -> dict[int, list[FaceDetection]]:
-        """Detect faces in video for smart cropping using YOLOv8"""
+        """Detect faces in video for smart cropping using OpenCV + YOLO fallback"""
         try:
-            from ultralytics import YOLO
             import cv2
         except ImportError:
-            self.logger.warning("YOLOv8 or OpenCV not available, using center crop")
+            self.logger.warning("OpenCV not available, using center crop")
             return {}
 
-        if self.yolo_model is None:
-            self.logger.info("Loading YOLOv8 model...")
-            self.yolo_model = YOLO("yolov8n.pt")
+        # Load OpenCV face detector (Haar cascade - built-in, reliable)
+        face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
 
         face_data = {}
         cap = cv2.VideoCapture(str(video_path))
@@ -393,14 +391,10 @@ Return ONLY the JSON array, no other text."""
 
         for i, moment in enumerate(moments):
             detections = []
-            # Sample frames throughout the moment (clamp to valid range)
-            mid_time = (moment.start + moment.end) / 2
-            end_sample = max(moment.start, moment.end - 0.5)  # Don't go before start
-            sample_times = [
-                moment.start,
-                mid_time,
-                end_sample
-            ]
+            # Sample more frames for better face detection
+            num_samples = 5
+            duration = moment.end - moment.start
+            sample_times = [moment.start + (duration * j / (num_samples - 1)) for j in range(num_samples)]
 
             for t in sample_times:
                 frame_num = int(t * fps)
@@ -409,21 +403,54 @@ Return ONLY the JSON array, no other text."""
                 if not ret:
                     continue
 
-                # Run YOLO detection (class 0 = person)
-                results = self.yolo_model(frame, classes=[0], verbose=False)
-                for r in results:
-                    for box in r.boxes:
-                        x1, y1, x2, y2 = map(int, box.xyxy[0])
-                        detections.append(FaceDetection(
-                            frame_num=frame_num,
-                            x=x1,
-                            y=y1,
-                            width=x2 - x1,
-                            height=y2 - y1,
-                            confidence=float(box.conf)
-                        ))
+                # Convert to grayscale for face detection
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+                # Detect faces using Haar cascade
+                faces = face_cascade.detectMultiScale(
+                    gray,
+                    scaleFactor=1.1,
+                    minNeighbors=5,
+                    minSize=(50, 50)
+                )
+
+                for (x, y, w, h) in faces:
+                    detections.append(FaceDetection(
+                        frame_num=frame_num,
+                        x=x,
+                        y=y,
+                        width=w,
+                        height=h,
+                        confidence=0.9  # Haar gives good confidence
+                    ))
+
+                # If no faces found, try YOLO for person detection as fallback
+                if len(faces) == 0 and self.yolo_model is None:
+                    try:
+                        from ultralytics import YOLO
+                        self.yolo_model = YOLO("yolov8n.pt")
+                    except ImportError:
+                        pass
+
+                if len(faces) == 0 and self.yolo_model is not None:
+                    results = self.yolo_model(frame, classes=[0], verbose=False)
+                    for r in results:
+                        for box in r.boxes:
+                            x1, y1, x2, y2 = map(int, box.xyxy[0])
+                            # Estimate face as top 25% of person box
+                            person_h = y2 - y1
+                            face_h = int(person_h * 0.25)
+                            detections.append(FaceDetection(
+                                frame_num=frame_num,
+                                x=x1,
+                                y=y1,  # Top of person = approximate face area
+                                width=x2 - x1,
+                                height=face_h,
+                                confidence=float(box.conf) * 0.7  # Lower confidence for estimate
+                            ))
 
             face_data[i] = detections
+            self.logger.debug(f"Moment {i}: detected {len(detections)} faces")
 
         cap.release()
         return face_data
@@ -461,31 +488,31 @@ Return ONLY the JSON array, no other text."""
             if not strong_detections:
                 strong_detections = face_data
 
-            # Use weighted average by confidence
+            # Use weighted average by confidence for FACE center
             total_conf = sum(f.confidence for f in strong_detections)
             if total_conf > 0:
-                avg_x = sum((f.x + f.width/2) * f.confidence for f in strong_detections) / total_conf
-                avg_face_top = sum(f.y * f.confidence for f in strong_detections) / total_conf
-                avg_face_height = sum(f.height * f.confidence for f in strong_detections) / total_conf
+                # Face center X
+                face_center_x = sum((f.x + f.width/2) * f.confidence for f in strong_detections) / total_conf
+                # Face center Y (center of face box, not top)
+                face_center_y = sum((f.y + f.height/2) * f.confidence for f in strong_detections) / total_conf
             else:
-                avg_x = sum(f.x + f.width/2 for f in strong_detections) / len(strong_detections)
-                avg_face_top = sum(f.y for f in strong_detections) / len(strong_detections)
-                avg_face_height = sum(f.height for f in strong_detections) / len(strong_detections)
+                face_center_x = sum(f.x + f.width/2 for f in strong_detections) / len(strong_detections)
+                face_center_y = sum(f.y + f.height/2 for f in strong_detections) / len(strong_detections)
 
-            # Head is at top 15-25% of person bounding box (YOLO detects full body)
-            head_y = avg_face_top + avg_face_height * 0.2
-            center_x = int(avg_x)
+            center_x = int(face_center_x)
+            # Face center should appear at upper 1/3 of output (closer to top)
+            face_target_y = face_center_y
 
             # Safety: ensure center_x is not too close to edges
-            min_margin = src_w * 0.15  # 15% margin from edges
-            center_x = max(min_margin, min(center_x, src_w - min_margin))
+            min_margin_x = src_w * 0.15  # 15% margin from edges
+            center_x = int(max(min_margin_x, min(center_x, src_w - min_margin_x)))
 
-            self.logger.debug(f"Face detection: center_x={center_x}, head_y={head_y}, detections={len(strong_detections)}")
+            self.logger.info(f"Face detected: center=({center_x}, {face_target_y:.0f}), {len(strong_detections)} detections")
         else:
             # No detection - use center of frame
             center_x = src_w // 2
-            head_y = src_h // 3  # Default to upper third
-            self.logger.debug("No face detected, using center crop")
+            face_target_y = src_h // 3  # Default to upper third
+            self.logger.info("No face detected, using center crop")
 
         # Calculate crop dimensions to get 9:16
         if src_w / src_h > target_ratio:
@@ -497,11 +524,11 @@ Return ONLY the JSON array, no other text."""
             crop_w = src_w
             crop_h = int(crop_w / target_ratio)
 
-        # Position crop so head is at upper 1/3 of output frame
+        # Position crop so FACE CENTER is at upper 1/3 of output frame
         # Upper 1/3 line is at crop_h / 3 from top
-        # We want head_y (in source) to appear at crop_h/3 (in crop)
-        # So: crop_y + crop_h/3 = head_y  =>  crop_y = head_y - crop_h/3
-        desired_crop_y = int(head_y - crop_h / 3)
+        # We want face_target_y (in source) to appear at crop_h/3 (in output)
+        # So: crop_y + crop_h/3 = face_target_y  =>  crop_y = face_target_y - crop_h/3
+        desired_crop_y = int(face_target_y - crop_h / 3)
         crop_y = max(0, min(desired_crop_y, src_h - crop_h))
 
         # Center horizontally on subject with safety check
