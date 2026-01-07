@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     whisper_model: str = "large-v3"  # Options: tiny, base, small, medium, large-v2, large-v3
     whisper_device: str = "cuda"
     whisper_compute_type: str = "float16"  # float16 for GPU, int8 for CPU
+    whisper_language: str = "en"  # Language code: en, he, es, etc. (None for auto-detect)
 
     # YOLO Settings
     yolo_model: str = "yolov8n.pt"  # nano model, fast

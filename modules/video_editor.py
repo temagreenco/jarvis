@@ -26,6 +26,42 @@ from utils.logger import get_logger
 logger = get_logger("video_editor")
 
 
+# ============================================================
+# VIRAL CONTENT ANALYSIS PATTERNS
+# ============================================================
+
+# Viral trigger words (Hebrew + English)
+VIRAL_TRIGGERS = {
+    "hebrew": {
+        "high_value": ["סוד", "אמת", "אף אחד לא מספר", "טעות", "בעצם", "הנה העניין",
+                       "משנה חיים", "סוף סוף", "חייבים לדעת", "פלוט טוויסט"],
+        "curiosity": ["אבל הנה הבעיה", "עד שהבנתי", "ואז הכל השתנה", "מה שקרה אחר כך"],
+        "authority": ["אחרי 10 שנים", "השקעתי", "עבדתי עם", "המחקר מראה", "הנתונים מוכיחים"],
+        "urgency": ["עכשיו", "לפני שיהיה מאוחר", "רוב האנשים אף פעם", "תפסיקו לעשות", "חייבים לשמוע"],
+    },
+    "english": {
+        "high_value": ["secret", "truth", "nobody tells you", "mistake", "actually",
+                       "here's the thing", "plot twist", "game changer", "life changing"],
+        "curiosity": ["but here's the problem", "until I realized", "everything changed", "what happened next"],
+        "authority": ["after 10 years", "I've spent", "working with", "data shows", "research proves"],
+        "urgency": ["right now", "before it's too late", "most people never", "stop doing this", "you need to hear"],
+    }
+}
+
+# Hook patterns with scoring weights
+HOOK_PATTERNS = [
+    (r"(?:nobody|no one).{0,20}(?:tells|knows|talks)", 30, "controversial_opener"),
+    (r"(?:why|how|what).{0,30}\?", 25, "question_hook"),
+    (r"(?:so there I was|let me tell you|story time)", 25, "story_hook"),
+    (r"\d+%|\$\d+|only \d+", 20, "statistic_shock"),
+    (r"(?:stop scrolling|wait|hold on|listen)", 20, "pattern_interrupt"),
+    # Hebrew patterns
+    (r"אף אחד לא", 30, "controversial_opener_he"),
+    (r"למה|איך|מה\s", 25, "question_hook_he"),
+    (r"סיפור|פעם אחת", 25, "story_hook_he"),
+]
+
+
 @dataclass
 class Word:
     """A transcribed word with timing"""
@@ -52,6 +88,118 @@ class ViralMoment:
     score: float
     reason: str
     hook: str  # The opening hook/quote
+    # Detailed score breakdown
+    hook_score: float = 0.0
+    content_score: float = 0.0
+    energy_score: float = 0.0
+    ending_score: float = 0.0
+    detected_hooks: list = field(default_factory=list)
+    detected_triggers: list = field(default_factory=list)
+
+
+# ============================================================
+# VIRALITY SCORING FUNCTIONS
+# ============================================================
+
+def analyze_hook_strength(text: str, first_n_words: int = 10) -> tuple[float, list[str]]:
+    """Analyze hook strength of first few words. Returns (score, detected_patterns)"""
+    words = text.split()[:first_n_words]
+    hook_text = ' '.join(words).lower()
+    score = 0.0
+    detected = []
+
+    for pattern, weight, name in HOOK_PATTERNS:
+        if re.search(pattern, hook_text, re.IGNORECASE):
+            score += weight
+            detected.append(name)
+
+    return min(30, score), detected
+
+
+def count_viral_triggers(text: str) -> tuple[float, list[str]]:
+    """Count viral trigger words/phrases. Returns (score, found_triggers)"""
+    score = 0.0
+    found = []
+    text_lower = text.lower()
+
+    for lang in ['hebrew', 'english']:
+        for category, triggers in VIRAL_TRIGGERS.get(lang, {}).items():
+            for trigger in triggers:
+                if trigger.lower() in text_lower:
+                    score += 5
+                    found.append(trigger)
+
+    return min(25, score), found
+
+
+def analyze_engagement_patterns(text: str) -> float:
+    """Detect engagement patterns in text. Returns score 0-25."""
+    score = 0.0
+    text_lower = text.lower()
+
+    # Complete thought (ends with conclusion)
+    if re.search(r'(so|therefore|that\'s why|לכן|אז|זה למה)', text_lower):
+        score += 15
+
+    # Actionable advice
+    if re.search(r'(you should|try this|do this|תעשו|נסו|צריך ל)', text_lower):
+        score += 20
+
+    # Specific numbers
+    if re.search(r'\d+', text):
+        score += 10
+
+    # Transformation language
+    if re.search(r'(before|after|changed|became|הפך|השתנה|לפני|אחרי)', text_lower):
+        score += 25
+
+    # Contrast/conflict
+    if re.search(r'(but|however|although|אבל|למרות|אף על פי)', text_lower):
+        score += 15
+
+    return min(25, score)
+
+
+def analyze_ending_strength(text: str) -> float:
+    """Analyze ending strength. Returns score -10 to +5."""
+    words = text.split()[-5:]
+    ending = ' '.join(words).lower()
+
+    # Weak endings get penalty
+    weak_patterns = [r'(um|uh|like|אה|אמ|כאילו)$', r'\.\.\.$', r'and$']
+    for pattern in weak_patterns:
+        if re.search(pattern, ending):
+            return -10
+
+    # Strong endings get bonus
+    strong_patterns = [r'[!?]$', r'(right|exactly|נכון|בדיוק)$']
+    for pattern in strong_patterns:
+        if re.search(pattern, ending):
+            return 5
+
+    return 0
+
+
+def calculate_virality_score(text: str) -> tuple[float, dict]:
+    """Calculate total virality score for text. Returns (score, breakdown)."""
+    hook_score, hooks = analyze_hook_strength(text)
+    trigger_score, triggers = count_viral_triggers(text)
+    energy_score = analyze_engagement_patterns(text)
+    ending_score = analyze_ending_strength(text)
+
+    total = hook_score + trigger_score + energy_score + ending_score
+    total = max(0, min(100, total))
+
+    breakdown = {
+        "hook_score": hook_score,
+        "content_score": trigger_score,
+        "energy_score": energy_score,
+        "ending_score": ending_score,
+        "detected_hooks": hooks,
+        "detected_triggers": triggers
+    }
+
+    return total, breakdown
 
 
 @dataclass
@@ -133,13 +281,21 @@ class VideoEditorModule(BaseModule):
             self.logger.info("[4/6] Detecting faces for smart crop...")
             face_data = self._detect_faces(video_path, moments)
 
-            # Step 5: Generate reels
-            self.logger.info("[5/6] Generating reels...")
-            reel_paths = []
+            # Step 5: Generate reels with thumbnails and SRT
+            self.logger.info("[5/7] Generating reels...")
+            reel_data = []
             for i, moment in enumerate(moments):
                 self.logger.info(f"Creating reel {i+1}/{len(moments)}: {moment.hook[:50]}...")
-                reel_path = output_dir / f"reel_{i+1:02d}.mp4"
+
+                # Generate file paths
+                reel_name = f"reel_{i+1:02d}_score{int(moment.score)}"
+                reel_path = output_dir / f"{reel_name}.mp4"
+                thumb_path = output_dir / f"{reel_name}_thumb.jpg"
+                srt_path = output_dir / f"{reel_name}.srt"
+
                 words_for_moment = self._get_words_for_timerange(segments, moment.start, moment.end)
+
+                # Create the reel video
                 self._create_reel(
                     video_path=video_path,
                     output_path=reel_path,
@@ -148,24 +304,61 @@ class VideoEditorModule(BaseModule):
                     face_data=face_data.get(i, []),
                     video_info=video_info
                 )
-                reel_paths.append(reel_path)
 
-            # Step 6: Generate Premiere Pro XML (optional)
-            self.logger.info("[6/6] Generating Premiere Pro XML...")
+                # Generate thumbnail (at 30% into the reel)
+                self._extract_thumbnail(reel_path, thumb_path)
+
+                # Generate SRT file (with adjusted timestamps)
+                adjusted_words = [
+                    Word(text=w.text, start=w.start - moment.start, end=w.end - moment.start, confidence=w.confidence)
+                    for w in words_for_moment
+                ]
+                self._generate_srt(adjusted_words, srt_path)
+
+                reel_data.append({
+                    "video": str(reel_path),
+                    "thumbnail": str(thumb_path),
+                    "srt": str(srt_path),
+                    "moment": moment
+                })
+
+            # Step 6: Generate Premiere Pro XML
+            self.logger.info("[6/7] Generating Premiere Pro XML...")
             xml_path = output_dir / "project.xml"
             self._generate_premiere_xml(video_path, moments, xml_path)
+
+            # Step 7: Save metadata JSON
+            self.logger.info("[7/7] Saving metadata...")
+            metadata_path = output_dir / "reels_metadata.json"
+            self._save_metadata(video_path, moments, reel_data, metadata_path)
 
             return TaskResult(
                 success=True,
                 data={
-                    "reels": [str(p) for p in reel_paths],
+                    "reels": [r["video"] for r in reel_data],
+                    "thumbnails": [r["thumbnail"] for r in reel_data],
+                    "subtitles": [r["srt"] for r in reel_data],
                     "xml_project": str(xml_path),
+                    "metadata": str(metadata_path),
                     "moments": [
-                        {"start": m.start, "end": m.end, "hook": m.hook, "score": m.score}
+                        {
+                            "start": m.start,
+                            "end": m.end,
+                            "hook": m.hook,
+                            "score": m.score,
+                            "score_breakdown": {
+                                "hook": m.hook_score,
+                                "content": m.content_score,
+                                "energy": m.energy_score,
+                                "ending": m.ending_score
+                            },
+                            "detected_hooks": m.detected_hooks,
+                            "detected_triggers": m.detected_triggers
+                        }
                         for m in moments
                     ]
                 },
-                metadata={"video": str(video_path), "num_reels": len(reel_paths)}
+                metadata={"video": str(video_path), "num_reels": len(reel_data)}
             )
 
         except Exception as e:
@@ -184,11 +377,20 @@ class VideoEditorModule(BaseModule):
         data = json.loads(result.stdout)
 
         video_stream = next(s for s in data["streams"] if s["codec_type"] == "video")
+
+        # Safe fps parsing (avoid eval)
+        fps_str = video_stream.get("r_frame_rate", "30/1")
+        if "/" in fps_str:
+            num, den = fps_str.split("/")
+            fps = float(num) / float(den) if float(den) != 0 else 30.0
+        else:
+            fps = float(fps_str)
+
         return {
             "duration": float(data["format"]["duration"]),
             "width": int(video_stream["width"]),
             "height": int(video_stream["height"]),
-            "fps": eval(video_stream.get("r_frame_rate", "30/1")),
+            "fps": fps,
         }
 
     def _transcribe(self, video_path: Path) -> list[Segment]:
@@ -206,11 +408,14 @@ class VideoEditorModule(BaseModule):
                 compute_type=settings.whisper_compute_type
             )
 
+        # Use configured language (None for auto-detect)
+        lang = settings.whisper_language if settings.whisper_language else None
         segments_raw, info = self.transcriber.transcribe(
             str(video_path),
             word_timestamps=True,
-            language="en"
+            language=lang
         )
+        self.logger.info(f"Detected language: {info.language}")
 
         segments = []
         for seg in segments_raw:
@@ -308,36 +513,86 @@ Return ONLY the JSON array, no other text."""
             return self._fallback_moment_detection(segments, num_moments)
 
     def _fallback_moment_detection(self, segments: list[Segment], num_moments: int) -> list[ViralMoment]:
-        """Fallback: split video into equal parts if AI fails"""
+        """Rule-based viral moment detection (works without Ollama)"""
         if not segments:
             return []
 
-        total_duration = segments[-1].end
-        target_duration = 30.0  # 30 second clips
-        moments = []
+        self.logger.info("Using rule-based virality analysis...")
+        candidates = []
 
-        # Find natural break points (longer pauses between segments)
+        # Build candidate segments from natural breaks
         current_start = 0.0
+        current_text = []
+
         for i, seg in enumerate(segments):
+            current_text.append(seg.text)
             duration = seg.end - current_start
+
+            # Check if we have a good segment
             if duration >= settings.min_reel_duration:
-                # Check if this is a good break point
+                is_break_point = False
+
+                # Natural pause between segments
                 if i < len(segments) - 1:
-                    gap = segments[i+1].start - seg.end
-                    if gap > 0.5 or duration >= target_duration:  # Natural pause or long enough
-                        moments.append(ViralMoment(
-                            start=current_start,
-                            end=seg.end,
-                            score=5.0,
-                            reason="Auto-detected segment",
-                            hook=seg.text[:50] if seg.text else ""
-                        ))
-                        current_start = segments[i+1].start if i < len(segments) - 1 else seg.end
+                    gap = segments[i + 1].start - seg.end
+                    if gap > 0.5:
+                        is_break_point = True
 
-                        if len(moments) >= num_moments:
-                            break
+                # Sentence end
+                if seg.text.strip().endswith(('.', '!', '?', '。')):
+                    is_break_point = True
 
-        return moments[:num_moments]
+                # Duration limit
+                if duration >= settings.max_reel_duration:
+                    is_break_point = True
+
+                if is_break_point:
+                    full_text = ' '.join(current_text)
+                    score, breakdown = calculate_virality_score(full_text)
+
+                    candidates.append(ViralMoment(
+                        start=current_start,
+                        end=seg.end,
+                        score=score,
+                        reason=f"Rule-based (hooks: {len(breakdown['detected_hooks'])}, triggers: {len(breakdown['detected_triggers'])})",
+                        hook=full_text[:50] if full_text else "",
+                        hook_score=breakdown['hook_score'],
+                        content_score=breakdown['content_score'],
+                        energy_score=breakdown['energy_score'],
+                        ending_score=breakdown['ending_score'],
+                        detected_hooks=breakdown['detected_hooks'],
+                        detected_triggers=breakdown['detected_triggers']
+                    ))
+
+                    current_start = segments[i + 1].start if i < len(segments) - 1 else seg.end
+                    current_text = []
+
+        # Sort by virality score and select top non-overlapping
+        candidates.sort(key=lambda m: m.score, reverse=True)
+
+        selected = []
+        for candidate in candidates:
+            # Check for overlap with already selected
+            overlaps = False
+            for existing in selected:
+                if not (candidate.end <= existing.start or candidate.start >= existing.end):
+                    overlaps = True
+                    break
+
+            if not overlaps:
+                selected.append(candidate)
+
+            if len(selected) >= num_moments:
+                break
+
+        # Sort by time for output
+        selected.sort(key=lambda m: m.start)
+
+        self.logger.info(f"Found {len(selected)} segments via rule-based analysis")
+        for m in selected:
+            self.logger.debug(f"  [{m.start:.1f}s-{m.end:.1f}s] Score: {m.score:.0f} - {m.hook[:30]}...")
+
+        return selected
 
     def _detect_faces(self, video_path: Path, moments: list[ViralMoment]) -> dict[int, list[FaceDetection]]:
         """Detect faces in video for smart cropping using YOLOv8"""
@@ -596,3 +851,136 @@ Return ONLY the JSON array, no other text."""
 
         output_path.write_text(xml_content)
         self.logger.info(f"Premiere XML saved: {output_path}")
+
+    def _extract_thumbnail(self, video_path: Path, output_path: Path, time: float = None) -> Path:
+        """Extract a thumbnail frame from the video"""
+        if time is None:
+            # Get video duration and extract at 30%
+            info = self._get_video_info(video_path)
+            time = info['duration'] * 0.3
+
+        cmd = [
+            'ffmpeg', '-y',
+            '-ss', str(time),
+            '-i', str(video_path),
+            '-vframes', '1',
+            '-q:v', '2',
+            str(output_path)
+        ]
+
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            self.logger.warning(f"Thumbnail extraction failed: {result.stderr}")
+            return None
+
+        self.logger.debug(f"Thumbnail saved: {output_path}")
+        return output_path
+
+    def _generate_srt(self, words: list[Word], output_path: Path, max_chars: int = 40) -> Path:
+        """Generate SRT subtitle file from word timestamps"""
+        srt_lines = []
+        index = 1
+        current_line = []
+        line_start = None
+
+        for word in words:
+            if line_start is None:
+                line_start = word.start
+
+            current_line.append(word.text.strip())
+            current_text = ' '.join(current_line)
+
+            # Break line if too long or at punctuation
+            should_break = (
+                len(current_text) > max_chars or
+                word.text.strip().endswith(('.', '?', '!', ','))
+            )
+
+            if should_break and current_line:
+                start_tc = self._format_srt_time(line_start)
+                end_tc = self._format_srt_time(word.end)
+
+                srt_lines.append(f"{index}")
+                srt_lines.append(f"{start_tc} --> {end_tc}")
+                srt_lines.append(current_text.strip())
+                srt_lines.append("")
+
+                index += 1
+                current_line = []
+                line_start = None
+
+        # Handle remaining words
+        if current_line:
+            start_tc = self._format_srt_time(line_start)
+            end_tc = self._format_srt_time(words[-1].end)
+            srt_lines.append(f"{index}")
+            srt_lines.append(f"{start_tc} --> {end_tc}")
+            srt_lines.append(' '.join(current_line).strip())
+            srt_lines.append("")
+
+        output_path.write_text('\n'.join(srt_lines), encoding='utf-8')
+        self.logger.debug(f"SRT saved: {output_path}")
+        return output_path
+
+    def _format_srt_time(self, seconds: float) -> str:
+        """Format seconds to SRT timestamp (HH:MM:SS,mmm)"""
+        hours = int(seconds // 3600)
+        minutes = int((seconds % 3600) // 60)
+        secs = int(seconds % 60)
+        millis = int((seconds % 1) * 1000)
+        return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
+
+    def _save_metadata(self, video_path: Path, moments: list[ViralMoment], reel_data: list, output_path: Path) -> None:
+        """Save comprehensive metadata JSON"""
+        from datetime import datetime
+
+        metadata = {
+            "generated_at": datetime.now().isoformat(),
+            "source_video": str(video_path),
+            "config": {
+                "min_duration": settings.min_reel_duration,
+                "max_duration": settings.max_reel_duration,
+                "target_reels": settings.target_reels,
+                "output_resolution": f"{settings.output_width}x{settings.output_height}"
+            },
+            "reels": []
+        }
+
+        for i, (moment, data) in enumerate(zip(moments, reel_data)):
+            reel_info = {
+                "id": f"reel_{i+1:02d}",
+                "source_timecode": {
+                    "start": self._format_timecode(moment.start),
+                    "end": self._format_timecode(moment.end)
+                },
+                "duration": round(moment.end - moment.start, 3),
+                "virality_score": round(moment.score, 1),
+                "score_breakdown": {
+                    "hook_strength": round(moment.hook_score, 1),
+                    "content_quality": round(moment.content_score, 1),
+                    "energy": round(moment.energy_score, 1),
+                    "ending": round(moment.ending_score, 1)
+                },
+                "detected_hooks": moment.detected_hooks,
+                "viral_triggers": moment.detected_triggers,
+                "reason": moment.reason,
+                "hook_preview": moment.hook[:100] if moment.hook else "",
+                "output_files": {
+                    "video": data["video"],
+                    "thumbnail": data["thumbnail"],
+                    "subtitles": data["srt"]
+                }
+            }
+            metadata["reels"].append(reel_info)
+
+        with open(output_path, 'w', encoding='utf-8') as f:
+            json.dump(metadata, f, ensure_ascii=False, indent=2)
+
+        self.logger.info(f"Metadata saved: {output_path}")
+
+    def _format_timecode(self, seconds: float) -> str:
+        """Format seconds to HH:MM:SS.mmm timecode"""
+        hours = int(seconds // 3600)
+        minutes = int((seconds % 3600) // 60)
+        secs = seconds % 60
+        return f"{hours:02d}:{minutes:02d}:{secs:06.3f}"
