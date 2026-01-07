@@ -85,6 +85,40 @@ class VideoEditorModule(BaseModule):
         self.transcriber = None
         self.yolo_model = None
 
+    def is_available(self) -> tuple[bool, str]:
+        """Check if required tools (ffmpeg, ffprobe) are available"""
+        missing = []
+
+        # Check ffmpeg
+        try:
+            result = subprocess.run(
+                ["ffmpeg", "-version"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode != 0:
+                missing.append("ffmpeg")
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            missing.append("ffmpeg")
+
+        # Check ffprobe
+        try:
+            result = subprocess.run(
+                ["ffprobe", "-version"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode != 0:
+                missing.append("ffprobe")
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            missing.append("ffprobe")
+
+        if missing:
+            return False, f"Missing required tools: {', '.join(missing)}"
+        return True, "Video editor is available"
+
     def can_handle(self, task: str) -> bool:
         """Check if this is a video editing task"""
         task_lower = task.lower()
@@ -181,15 +215,41 @@ class VideoEditorModule(BaseModule):
             "-show_format", "-show_streams", str(video_path)
         ]
         result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise RuntimeError(f"ffprobe failed: {result.stderr}")
+
         data = json.loads(result.stdout)
 
-        video_stream = next(s for s in data["streams"] if s["codec_type"] == "video")
+        video_stream = next(
+            (s for s in data["streams"] if s["codec_type"] == "video"),
+            None
+        )
+        if not video_stream:
+            raise ValueError("No video stream found in file")
+
+        # Safely parse frame rate (e.g., "30/1" or "30000/1001")
+        fps_str = video_stream.get("r_frame_rate", "30/1")
+        fps = self._parse_frame_rate(fps_str)
+
         return {
             "duration": float(data["format"]["duration"]),
             "width": int(video_stream["width"]),
             "height": int(video_stream["height"]),
-            "fps": eval(video_stream.get("r_frame_rate", "30/1")),
+            "fps": fps,
         }
+
+    def _parse_frame_rate(self, fps_str: str) -> float:
+        """Safely parse frame rate string (e.g., '30/1' or '30000/1001')"""
+        if "/" in fps_str:
+            num, denom = fps_str.split("/")
+            try:
+                return float(num) / float(denom) if float(denom) != 0 else 30.0
+            except (ValueError, ZeroDivisionError):
+                return 30.0
+        try:
+            return float(fps_str)
+        except ValueError:
+            return 30.0
 
     def _transcribe(self, video_path: Path) -> list[Segment]:
         """Transcribe video with faster-whisper (GPU accelerated)"""
