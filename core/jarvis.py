@@ -46,6 +46,13 @@ class Jarvis:
         except ImportError as e:
             logger.warning(f"Could not load Video Editor: {e}")
 
+        try:
+            from modules.chat_module import ChatModule
+            self.router.register(ChatModule(), default=True)
+            logger.info("Chat module loaded")
+        except ImportError as e:
+            logger.warning(f"Could not load Chat module: {e}")
+
         self._initialized = True
         logger.info("JARVIS initialization complete")
 

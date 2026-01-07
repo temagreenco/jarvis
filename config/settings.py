@@ -64,6 +64,14 @@ class Settings(BaseSettings):
     audio_codec: str = "aac"
     audio_bitrate: str = "192k"
 
+    # Chat Settings
+    chat_model: str = "llama3.1:8b"
+    chat_context_length: int = 10  # Number of messages to keep in context
+    chat_system_prompt: str = "You are JARVIS, a helpful AI assistant. Be concise, direct, and helpful."
+    chat_max_retries: int = 3
+    chat_timeout: float = 60.0  # seconds
+    chat_data_dir: Path = Field(default_factory=lambda: Path(__file__).parent.parent / "data")
+
     # Telegram Bot
     telegram_token: Optional[str] = None
     telegram_allowed_users: list[int] = Field(default_factory=list)
