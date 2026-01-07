@@ -4,7 +4,7 @@ JARVIS Configuration - All settings in one place
 import os
 from pathlib import Path
 from typing import Optional
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
 
 
@@ -81,9 +81,10 @@ class Settings(BaseSettings):
 
 When you don't know something, admit it honestly. When you can help, do so thoroughly."""
 
-    class Config:
-        env_file = ".env"
-        env_prefix = "JARVIS_"
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_prefix="JARVIS_"
+    )
 
 
 # Global settings instance

@@ -125,10 +125,16 @@ Just send any message to chat with me!"""
         jarvis = get_jarvis()
         status = jarvis.get_status()
 
+        # Extract module names from dict format
+        modules = status['modules']
+        module_names = ', '.join(
+            m['name'] if isinstance(m, dict) else m for m in modules
+        ) if modules else 'None'
+
         status_text = f"""JARVIS Status:
 
 Initialized: {status['initialized']}
-Active Modules: {', '.join(status['modules']) if status['modules'] else 'None'}
+Active Modules: {module_names}
 
 Memory Stats:
 - Total Tasks: {status['memory_stats'].get('total_tasks', 0)}
