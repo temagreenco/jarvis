@@ -585,35 +585,14 @@ Return ONLY the JSON array, no other text."""
     ) -> str:
         """Build FFmpeg filter complex with Hormozi-style cuts and hook intro"""
 
-        # Calculate zoom segments - more aggressive Hormozi-style
-        cut_interval = (settings.cut_interval_min + settings.cut_interval_max) / 2
-        num_cuts = max(1, int(duration / cut_interval))
-
-        # Build zoom expression for smooth Hormozi-style pulsing zoom
-        # Creates smooth zoom pulses that ease in/out at cut intervals
-        zoom_factor = settings.zoom_factor
-        zoom_exprs = []
-        for i in range(num_cuts):
-            t_center = i * cut_interval + 0.1  # Center of zoom pulse
-            # Smooth pulse using triangle function for smoother zoom
-            # Peak zoom at t_center, returns to 1.0 over 0.3s
-            zoom_exprs.append(
-                f"(1-abs(t-{t_center:.2f})/0.15)*{zoom_factor - 1}*between(t,{t_center - 0.15:.2f},{t_center + 0.15:.2f})"
-            )
-
-        # Combine zoom expressions: base zoom (1) + smooth pulse zooms
-        if zoom_exprs:
-            zoom_expr = f"1+{'+'.join(zoom_exprs)}"
-        else:
-            zoom_expr = "1"
-
         # Build video filter chain
-        # 1. Crop to subject -> 2. Scale to target -> 3. Zoom pulses -> 4. Subtitles -> 5. Hook overlay
+        # 1. Crop to subject -> 2. Scale to target -> 3. Subtitles -> 4. Hook overlay
+        # Note: Removed zoompan as it's causing FFmpeg expression parsing issues
+        # TODO: Re-add zoom with simpler approach (scale-based or separate filter)
         video_filters = [
             f"crop={crop_w}:{crop_h}:{crop_x}:{crop_y}",
             f"scale={target_w}:{target_h}:flags=lanczos",
-            # Apply smooth zoom with expression
-            f"zoompan=z='{zoom_expr}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s={target_w}x{target_h}:fps={settings.fps}"
+            f"fps={settings.fps}"
         ]
 
         # Add subtitles if available
@@ -644,7 +623,7 @@ Return ONLY the JSON array, no other text."""
 
         video_chain = ",".join(video_filters) + "[outv]"
 
-        # Audio processing: normalize (skip silence removal for cleaner output)
+        # Audio processing: normalize
         audio_filters = [
             "loudnorm=I=-16:TP=-1.5:LRA=11"  # Broadcast standard normalization
         ]
