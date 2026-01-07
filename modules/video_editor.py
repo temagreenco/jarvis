@@ -656,11 +656,15 @@ Return ONLY the JSON array, no other text."""
         """Build FFmpeg filter complex with Hormozi-style cuts and hook intro"""
 
         # Build video filter chain
-        # 1. Crop to subject -> 2. Scale to target -> 3. Subtitles -> 4. Hook overlay
+        # 1. Crop -> 2. Scale -> 3. Color punch -> 4. Subtitles -> 5. Hook
         video_filters = [
             f"crop={crop_w}:{crop_h}:{crop_x}:{crop_y}",
             f"scale={target_w}:{target_h}:flags=lanczos",
-            f"fps={settings.fps}"
+            f"fps={settings.fps}",
+            # Ad punch: slight contrast + saturation boost for visual pop
+            "eq=contrast=1.08:saturation=1.10",
+            # Subtle sharpening for crisp text/faces
+            "unsharp=5:5:0.8:5:5:0.4"
         ]
 
         # Add subtitles if available

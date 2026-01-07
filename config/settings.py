@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     subtitle_shadow: bool = True
     subtitle_shadow_color: str = "#000000"
     subtitle_shadow_offset: int = 4
-    subtitle_position_y: float = 0.82  # Vertical position (0-1)
+    subtitle_position_y: float = 0.75  # Safe zone: above TikTok/Reels UI (bottom 20%)
     subtitle_uppercase: bool = True
     subtitle_animation: str = "pop"  # pop, fade, none
 
