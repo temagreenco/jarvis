@@ -27,6 +27,10 @@ app = typer.Typer(
 chat_app = typer.Typer(help="Chat with JARVIS")
 app.add_typer(chat_app, name="chat")
 
+# Video subcommand group
+video_app = typer.Typer(help="Video editing commands")
+app.add_typer(video_app, name="video")
+
 
 @app.command()
 def status():
@@ -216,6 +220,107 @@ def chat_list(
         console.print(f"  [cyan]{conv['id']}[/cyan] - {conv['message_count']} messages")
         if conv['last_message']:
             console.print(f"    [dim]{conv['last_message']}...[/dim]")
+
+
+@video_app.command("concat")
+def video_concat(
+    videos: list[str] = typer.Argument(..., help="Video files to concatenate (at least 2)"),
+    output: str = typer.Option("combined.mp4", "--output", "-o", help="Output filename"),
+    output_dir: Optional[str] = typer.Option(None, "--dir", "-d", help="Output directory")
+):
+    """Concatenate multiple videos into one"""
+    from modules.video_editor import VideoEditorModule
+
+    if len(videos) < 2:
+        console.print("[red]Error: At least 2 videos required for concatenation[/red]")
+        raise typer.Exit(1)
+
+    # Validate files exist
+    from pathlib import Path
+    for v in videos:
+        if not Path(v).exists():
+            console.print(f"[red]Error: Video file not found: {v}[/red]")
+            raise typer.Exit(1)
+
+    editor = VideoEditorModule()
+
+    # Check if ffmpeg is available
+    available, msg = editor.is_available()
+    if not available:
+        console.print(f"[red]Error: {msg}[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"[bold blue]Concatenating {len(videos)} videos...[/bold blue]")
+    for i, v in enumerate(videos, 1):
+        console.print(f"  {i}. {Path(v).name}")
+
+    with console.status("[bold blue]Processing...[/bold blue]"):
+        result = editor.execute(
+            task="concat",
+            video_paths=videos,
+            output_name=output,
+            output_dir=output_dir or str(settings.output_dir)
+        )
+
+    if result.success:
+        console.print(Panel.fit(
+            f"""[green]Videos combined successfully![/green]
+
+[bold]Output:[/bold] {result.data['output_path']}
+[bold]Duration:[/bold] {result.data['duration']:.1f}s
+[bold]Resolution:[/bold] {result.data['resolution']}""",
+            title="[bold green]Success[/bold green]",
+            border_style="green"
+        ))
+    else:
+        console.print(f"[red]Error: {result.error}[/red]")
+        raise typer.Exit(1)
+
+
+@video_app.command("reels")
+def video_reels(
+    video: str = typer.Argument(..., help="Source video file"),
+    num_reels: int = typer.Option(8, "--num", "-n", help="Number of reels to create"),
+    output_dir: Optional[str] = typer.Option(None, "--dir", "-d", help="Output directory")
+):
+    """Create viral reels from a long video"""
+    from modules.video_editor import VideoEditorModule
+    from pathlib import Path
+
+    if not Path(video).exists():
+        console.print(f"[red]Error: Video file not found: {video}[/red]")
+        raise typer.Exit(1)
+
+    editor = VideoEditorModule()
+
+    available, msg = editor.is_available()
+    if not available:
+        console.print(f"[red]Error: {msg}[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"[bold blue]Creating {num_reels} reels from {Path(video).name}...[/bold blue]")
+
+    result = editor.execute(
+        task="create reels",
+        video_path=video,
+        num_reels=num_reels,
+        output_dir=output_dir or str(settings.output_dir)
+    )
+
+    if result.success:
+        console.print(Panel.fit(
+            f"""[green]Reels created successfully![/green]
+
+[bold]Created {len(result.data['reels'])} reels:[/bold]
+{chr(10).join(f"  • {r}" for r in result.data['reels'])}
+
+[bold]Project XML:[/bold] {result.data['xml_project']}""",
+            title="[bold green]Success[/bold green]",
+            border_style="green"
+        ))
+    else:
+        console.print(f"[red]Error: {result.error}[/red]")
+        raise typer.Exit(1)
 
 
 @app.command()

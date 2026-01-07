@@ -77,7 +77,8 @@ class VideoEditorModule(BaseModule):
     # Keywords that indicate video editing task
     TASK_KEYWORDS = [
         "video", "reel", "clip", "edit", "cut", "shorts", "tiktok",
-        "instagram", "youtube shorts", "viral", "transcribe"
+        "instagram", "youtube shorts", "viral", "transcribe",
+        "combine", "concat", "merge", "join"
     ]
 
     def __init__(self):
@@ -125,8 +126,20 @@ class VideoEditorModule(BaseModule):
         return any(kw in task_lower for kw in self.TASK_KEYWORDS)
 
     def validate_inputs(self, **kwargs) -> tuple[bool, Optional[str]]:
-        """Validate video file exists"""
+        """Validate video file(s) exist"""
         video_path = kwargs.get("video_path")
+        video_paths = kwargs.get("video_paths")  # For concatenation
+
+        # Handle concatenation with multiple videos
+        if video_paths:
+            if len(video_paths) < 2:
+                return False, "At least 2 videos required for concatenation"
+            for vp in video_paths:
+                if not Path(vp).exists():
+                    return False, f"Video file not found: {vp}"
+            return True, None
+
+        # Handle single video operations
         if not video_path:
             return False, "video_path is required"
 
@@ -138,6 +151,11 @@ class VideoEditorModule(BaseModule):
 
     def execute(self, task: str, **kwargs) -> TaskResult:
         """Execute video editing pipeline"""
+        # Check if this is a concatenation task
+        video_paths = kwargs.get("video_paths")
+        if video_paths:
+            return self._execute_concatenation(video_paths, kwargs)
+
         video_path = Path(kwargs["video_path"])
         output_dir = Path(kwargs.get("output_dir", settings.output_dir))
         num_reels = kwargs.get("num_reels", settings.target_reels)
@@ -204,6 +222,87 @@ class VideoEditorModule(BaseModule):
 
         except Exception as e:
             self.logger.error(f"Video editing failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return TaskResult(success=False, error=str(e))
+
+    def _execute_concatenation(self, video_paths: list[str], kwargs: dict) -> TaskResult:
+        """Concatenate multiple videos into one"""
+        output_dir = Path(kwargs.get("output_dir", settings.output_dir))
+        output_name = kwargs.get("output_name", "combined.mp4")
+        output_path = output_dir / output_name
+
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        self.logger.info(f"Concatenating {len(video_paths)} videos...")
+        for i, vp in enumerate(video_paths, 1):
+            self.logger.info(f"  {i}. {Path(vp).name}")
+
+        try:
+            # Create a temporary file list for ffmpeg concat
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+                for vp in video_paths:
+                    # Escape single quotes in paths
+                    escaped_path = str(Path(vp).resolve()).replace("'", "'\\''")
+                    f.write(f"file '{escaped_path}'\n")
+                list_file = f.name
+
+            self.logger.info("Running ffmpeg concat...")
+
+            # Use concat demuxer for same-codec videos (fast)
+            cmd = [
+                "ffmpeg", "-y",
+                "-f", "concat",
+                "-safe", "0",
+                "-i", list_file,
+                "-c", "copy",  # Stream copy (no re-encoding, very fast)
+                str(output_path)
+            ]
+
+            result = subprocess.run(cmd, capture_output=True, text=True)
+
+            if result.returncode != 0:
+                # If stream copy fails, try with re-encoding
+                self.logger.warning("Stream copy failed, re-encoding videos...")
+                cmd = [
+                    "ffmpeg", "-y",
+                    "-f", "concat",
+                    "-safe", "0",
+                    "-i", list_file,
+                    "-c:v", "libx264",
+                    "-preset", "fast",
+                    "-crf", "23",
+                    "-c:a", "aac",
+                    "-b:a", "192k",
+                    str(output_path)
+                ]
+                result = subprocess.run(cmd, capture_output=True, text=True)
+
+                if result.returncode != 0:
+                    raise RuntimeError(f"FFmpeg concat failed: {result.stderr}")
+
+            # Clean up temp file
+            Path(list_file).unlink()
+
+            # Get output file info
+            output_info = self._get_video_info(output_path)
+
+            self.logger.info(f"Combined video saved: {output_path}")
+            self.logger.info(f"Duration: {output_info['duration']:.1f}s")
+
+            return TaskResult(
+                success=True,
+                data={
+                    "output_path": str(output_path),
+                    "duration": output_info["duration"],
+                    "resolution": f"{output_info['width']}x{output_info['height']}",
+                    "input_videos": video_paths
+                },
+                metadata={"operation": "concatenate", "num_videos": len(video_paths)}
+            )
+
+        except Exception as e:
+            self.logger.error(f"Video concatenation failed: {e}")
             import traceback
             traceback.print_exc()
             return TaskResult(success=False, error=str(e))

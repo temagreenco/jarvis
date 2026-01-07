@@ -270,3 +270,63 @@ class TestVideoEditorModule:
 
         with pytest.raises(ValueError, match="No video stream"):
             module._get_video_info(Path("/fake/video.mp4"))
+
+    def test_can_handle_concat(self):
+        """Test can_handle for concatenation tasks"""
+        module = VideoEditorModule()
+        assert module.can_handle("combine videos") is True
+        assert module.can_handle("concat files") is True
+        assert module.can_handle("merge clips") is True
+        assert module.can_handle("join videos") is True
+
+    def test_validate_inputs_multiple_videos(self):
+        """Test validate_inputs with multiple video paths"""
+        module = VideoEditorModule()
+
+        # Not enough videos
+        valid, error = module.validate_inputs(video_paths=["/one.mp4"])
+        assert valid is False
+        assert "At least 2 videos" in error
+
+        # Videos don't exist
+        valid, error = module.validate_inputs(video_paths=["/fake1.mp4", "/fake2.mp4"])
+        assert valid is False
+        assert "not found" in error
+
+    def test_validate_inputs_valid_multiple_videos(self):
+        """Test validate_inputs with valid multiple video paths"""
+        module = VideoEditorModule()
+        with tempfile.NamedTemporaryFile(suffix=".mp4") as f1:
+            with tempfile.NamedTemporaryFile(suffix=".mp4") as f2:
+                valid, error = module.validate_inputs(video_paths=[f1.name, f2.name])
+                assert valid is True
+                assert error is None
+
+    @patch('modules.video_editor.subprocess.run')
+    def test_execute_concatenation(self, mock_run):
+        """Test _execute_concatenation method"""
+        # Mock ffmpeg concat success
+        mock_run.return_value = MagicMock(returncode=0, stdout='', stderr='')
+
+        module = VideoEditorModule()
+
+        # Mock _get_video_info to return valid data
+        with patch.object(module, '_get_video_info') as mock_info:
+            mock_info.return_value = {
+                "duration": 60.0,
+                "width": 1920,
+                "height": 1080,
+                "fps": 30.0
+            }
+
+            with tempfile.TemporaryDirectory() as tmpdir:
+                with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f1:
+                    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f2:
+                        result = module._execute_concatenation(
+                            [f1.name, f2.name],
+                            {"output_dir": tmpdir, "output_name": "test_combined.mp4"}
+                        )
+
+                        assert result.success is True
+                        assert "output_path" in result.data
+                        assert result.data["duration"] == 60.0
