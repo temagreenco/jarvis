@@ -239,11 +239,13 @@ class VideoEditorModule(BaseModule):
                 compute_type=settings.whisper_compute_type
             )
 
+        # Auto-detect language (supports Hebrew, English, etc.)
         segments_raw, info = self.transcriber.transcribe(
             str(video_path),
             word_timestamps=True,
-            language="en"
+            language=None  # Auto-detect
         )
+        self.logger.info(f"Detected language: {info.language}")
 
         segments = []
         for seg in segments_raw:
@@ -621,8 +623,13 @@ Return ONLY the JSON array, no other text."""
 
             # Escape special characters for FFmpeg drawtext (after cleaning)
             text = text.replace("\\", "\\\\").replace("'", "'\\''").replace(":", "\\:").replace("%", "\\%")
-            start = chunk[0].start - offset
-            end = chunk[-1].end - offset
+
+            # Apply subtitle timing offset (negative = show earlier for lip sync)
+            sub_offset = getattr(settings, 'subtitle_offset', 0)
+            start = chunk[0].start - offset + sub_offset
+            end = chunk[-1].end - offset + sub_offset
+            # Ensure start isn't negative
+            start = max(0, start)
 
             # Use fontfile if found, otherwise use font name as fallback
             if font_path:

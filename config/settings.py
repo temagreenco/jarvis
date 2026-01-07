@@ -53,7 +53,8 @@ class Settings(BaseSettings):
     subtitle_shadow: bool = True
     subtitle_shadow_color: str = "#000000"
     subtitle_shadow_offset: int = 4
-    subtitle_position_y: float = 0.75  # Safe zone: above TikTok/Reels UI (bottom 20%)
+    subtitle_position_y: float = 0.55  # Safe zone: moved up 20% from bottom
+    subtitle_offset: float = -0.15  # Show subtitles 150ms earlier (sync fix)
     subtitle_uppercase: bool = True
     subtitle_animation: str = "pop"  # pop, fade, none
 
