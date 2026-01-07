@@ -695,8 +695,9 @@ Return ONLY the JSON array, no other text."""
 
             # Apply subtitle timing offset (negative = show earlier for lip sync)
             sub_offset = getattr(settings, 'subtitle_offset', 0)
+            duration_buffer = getattr(settings, 'subtitle_duration_buffer', 0.3)
             start = chunk[0].start - offset + sub_offset
-            end = chunk[-1].end - offset + sub_offset
+            end = chunk[-1].end - offset + sub_offset + duration_buffer  # Extend display time
             # Ensure start isn't negative
             start = max(0, start)
 

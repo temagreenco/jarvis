@@ -43,7 +43,7 @@ class Settings(BaseSettings):
     fps: int = 30
 
     # Subtitle Settings
-    subtitle_words_per_chunk: int = 3  # 2-4 words per row
+    subtitle_words_per_chunk: int = 4  # 2-4 words per row
     subtitle_font_size: int = 75  # Increased 25% (was 60)
     subtitle_font: str = "Arial-Bold"
     subtitle_color: str = "white"
@@ -55,6 +55,7 @@ class Settings(BaseSettings):
     subtitle_shadow_offset: int = 4
     subtitle_position_y: float = 0.65  # Moved down 10% (was 0.55)
     subtitle_offset: float = -0.50  # Show subtitles 500ms earlier (sync fix)
+    subtitle_duration_buffer: float = 0.3  # Extend subtitle display by 300ms
     subtitle_letter_spacing: int = 0  # Disabled (was 1)
     subtitle_uppercase: bool = True
     subtitle_animation: str = "pop"  # pop, fade, none
