@@ -47,19 +47,38 @@ class Settings(BaseSettings):
     subtitle_font_size: int = 60
     subtitle_font: str = "Arial-Bold"
     subtitle_color: str = "white"
+    subtitle_highlight_color: str = "#FFFF00"  # Yellow highlight for current word
     subtitle_stroke_color: str = "black"
     subtitle_stroke_width: int = 3
+    subtitle_shadow: bool = True
+    subtitle_shadow_color: str = "#000000"
+    subtitle_shadow_offset: int = 4
+    subtitle_position_y: float = 0.82  # Vertical position (0-1)
+    subtitle_uppercase: bool = True
+    subtitle_animation: str = "pop"  # pop, fade, none
 
     # Editing Style (Hormozi style)
     cut_interval_min: float = 2.5  # seconds
     cut_interval_max: float = 5.0  # seconds
+    zoom_enabled: bool = True
     zoom_factor: float = 1.25  # 25% zoom on cuts
+    zoom_duration: float = 0.15  # seconds
     silence_threshold: float = -40  # dB
     silence_min_duration: float = 0.3  # seconds
+
+    # Smart Tracking Settings
+    dead_zone_pixels: int = 80
+    smoothing_factor: float = 0.15
+    momentum_decay: float = 0.85
+
+    # Audio Settings
+    loudness_target: float = -14.0  # LUFS
 
     # FFmpeg Settings
     ffmpeg_preset: str = "p4"  # NVENC preset: p1(fastest) to p7(quality)
     ffmpeg_crf: int = 23
+    crf: int = 20  # Alias for preset system
+    preset: str = "medium"  # libx264 preset
     video_codec: str = "h264_nvenc"  # GPU encoding
     audio_codec: str = "aac"
     audio_bitrate: str = "192k"
