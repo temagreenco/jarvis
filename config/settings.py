@@ -83,7 +83,8 @@ When you don't know something, admit it honestly. When you can help, do so thoro
 
     model_config = SettingsConfigDict(
         env_file=".env",
-        env_prefix="JARVIS_"
+        env_prefix="JARVIS_",
+        extra="ignore"  # Allow extra env vars not defined in Settings
     )
 
 
