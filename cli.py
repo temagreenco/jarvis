@@ -21,23 +21,31 @@ console = Console()
 
 @app.command()
 def video(
-    input_path: Path = typer.Argument(..., help="Path to input video file"),
+    input_path: Path = typer.Argument(..., help="Path to input video file (Camera 1)"),
+    video2: Path = typer.Option(None, "--video2", "-v2", help="Path to second video (Camera 2) for multi-cam"),
     output_dir: Path = typer.Option(None, "--output", "-o", help="Output directory"),
     num_reels: int = typer.Option(8, "--reels", "-n", help="Number of reels to generate"),
 ):
-    """Create viral short-form reels from a video"""
+    """Create viral short-form reels from a video (supports multi-cam)"""
     if not input_path.exists():
         console.print(f"[red]Error: Video file not found: {input_path}[/red]")
+        raise typer.Exit(1)
+
+    if video2 and not video2.exists():
+        console.print(f"[red]Error: Second video file not found: {video2}[/red]")
         raise typer.Exit(1)
 
     output = output_dir or settings.output_dir / input_path.stem
     output.mkdir(parents=True, exist_ok=True)
 
+    multi_cam = video2 is not None
     console.print(Panel(
         f"[bold cyan]JARVIS Video Editor[/bold cyan]\n\n"
-        f"Input: {input_path}\n"
-        f"Output: {output}\n"
-        f"Target Reels: {num_reels}",
+        f"Camera 1: {input_path}\n"
+        + (f"Camera 2: {video2}\n" if multi_cam else "")
+        + f"Output: {output}\n"
+        f"Target Reels: {num_reels}\n"
+        f"Mode: {'Multi-Cam' if multi_cam else 'Single Camera'}",
         title="Starting"
     ))
 
@@ -45,20 +53,26 @@ def video(
     result = jarvis.process(
         f"Create {num_reels} viral reels from video",
         video_path=str(input_path),
+        video_path_2=str(video2) if video2 else None,
         output_dir=str(output),
         num_reels=num_reels
     )
 
     if result.success:
+        reels = result.data.get('reels', [])
+        subs = result.data.get('subtitles', [])
         console.print(Panel(
             f"[bold green]Success![/bold green]\n\n"
-            f"Created {len(result.data.get('reels', []))} reels\n"
+            f"Created {len(reels)} reels\n"
+            f"Created {len(subs)} SRT files\n"
             f"Duration: {result.duration:.1f}s\n\n"
             f"Output: {output}",
             title="Complete"
         ))
-        for reel in result.data.get("reels", []):
+        for reel in reels:
             console.print(f"  • {reel}")
+        if result.data.get('xml_project'):
+            console.print(f"\n  📁 Project XML: {result.data['xml_project']}")
     else:
         console.print(f"[red]Error: {result.error}[/red]")
         raise typer.Exit(1)
