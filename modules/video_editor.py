@@ -473,13 +473,42 @@ Return ONLY the JSON array, no other text."""
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
             # Try with CPU encoding as fallback
-            self.logger.warning("GPU encoding failed, trying CPU...")
-            cmd[cmd.index("-c:v") + 1] = "libx264"
-            cmd.remove("-preset")
-            cmd.remove(settings.ffmpeg_preset)
-            result = subprocess.run(cmd, capture_output=True, text=True)
+            self.logger.warning(f"GPU encoding failed: {result.stderr[:200]}, trying CPU...")
+            # Rebuild command for CPU encoding
+            cmd_cpu = [
+                "ffmpeg", "-y",
+                "-ss", str(moment.start),
+                "-i", str(video_path),
+                "-t", str(moment.end - moment.start),
+                "-filter_complex", filter_complex,
+                "-map", "[outv]",
+                "-map", "[outa]",
+                "-c:v", "libx264",
+                "-preset", "medium",
+                "-crf", str(settings.ffmpeg_crf),
+                "-c:a", settings.audio_codec,
+                "-b:a", settings.audio_bitrate,
+                "-movflags", "+faststart",
+                str(output_path)
+            ]
+            result = subprocess.run(cmd_cpu, capture_output=True, text=True)
             if result.returncode != 0:
                 raise RuntimeError(f"FFmpeg failed: {result.stderr}")
+
+    def _find_font(self) -> str:
+        """Find an available font file for subtitles"""
+        font_paths = [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
+            "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
+            "/System/Library/Fonts/Helvetica.ttc",  # macOS
+            "C\\:/Windows/Fonts/arial.ttf",  # Windows (escaped for FFmpeg)
+        ]
+        for path in font_paths:
+            if Path(path.replace("\\:", ":")).exists():
+                return path
+        # Fallback: use built-in sans font (may not work on all systems)
+        return ""
 
     def _create_subtitle_filter(self, words: list[Word], offset: float) -> str:
         """Create drawtext filter for word-synced subtitles"""
@@ -488,18 +517,20 @@ Return ONLY the JSON array, no other text."""
 
         filters = []
         chunk_size = settings.subtitle_words_per_chunk
+        font_path = self._find_font()
 
         for i in range(0, len(words), chunk_size):
             chunk = words[i:i+chunk_size]
             text = " ".join(w.text for w in chunk)
             # Escape special characters for FFmpeg
-            text = text.replace("'", "'\\''").replace(":", "\\:")
+            text = text.replace("\\", "\\\\").replace("'", "'\\''").replace(":", "\\:").replace("[", "\\[").replace("]", "\\]")
             start = chunk[0].start - offset
             end = chunk[-1].end - offset
 
+            font_clause = f"fontfile='{font_path}':" if font_path else ""
             filters.append(
                 f"drawtext=text='{text}':"
-                f"fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:"
+                f"{font_clause}"
                 f"fontsize={settings.subtitle_font_size}:"
                 f"fontcolor={settings.subtitle_color}:"
                 f"bordercolor={settings.subtitle_stroke_color}:"
@@ -521,39 +552,42 @@ Return ONLY the JSON array, no other text."""
 
         # Calculate zoom segments
         cut_interval = (settings.cut_interval_min + settings.cut_interval_max) / 2
-        num_cuts = int(duration / cut_interval)
+        num_cuts = max(1, int(duration / cut_interval))
 
-        # Base video processing
-        video_filters = [
-            f"crop={crop_w}:{crop_h}:{crop_x}:{crop_y}",
-            f"scale={target_w}:{target_h}:flags=lanczos"
-        ]
-
-        # Add zoom pulses (Hormozi style)
+        # Build zoom expression for Hormozi-style pulsing zoom
+        # Creates quick zoom pulses at cut intervals
         zoom_factor = settings.zoom_factor
+        zoom_exprs = []
         for i in range(num_cuts):
             t_start = i * cut_interval
-            t_end = t_start + 0.2  # Quick zoom
+            t_end = t_start + 0.15  # Quick 150ms zoom pulse
+            zoom_exprs.append(f"between(t,{t_start:.2f},{t_end:.2f})*{zoom_factor - 1}")
 
-            # zoompan for zoom effect
-            video_filters.append(
-                f"zoompan=z='if(between(time,{t_start:.2f},{t_end:.2f}),{zoom_factor},1)':"
-                f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
-                f"d=1:s={target_w}x{target_h}:fps={settings.fps}"
-            )
+        # Combine zoom expressions: base zoom (1) + pulse zooms
+        if zoom_exprs:
+            zoom_expr = f"1+{'+'.join(zoom_exprs)}"
+        else:
+            zoom_expr = "1"
 
-        # Add subtitles
+        # Build video filter chain
+        # 1. Crop to subject -> 2. Scale to target -> 3. Zoom pulses -> 4. Subtitles
+        video_filters = [
+            f"crop={crop_w}:{crop_h}:{crop_x}:{crop_y}",
+            f"scale={target_w}:{target_h}:flags=lanczos",
+            # Apply zoom with expression - zoompan creates the pulsing effect
+            f"zoompan=z='{zoom_expr}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s={target_w}x{target_h}:fps={settings.fps}"
+        ]
+
+        # Add subtitles if available
         if subtitle_filter:
             video_filters.append(subtitle_filter)
 
         video_chain = ",".join(video_filters) + "[outv]"
 
-        # Audio processing: normalize and remove silence
+        # Audio processing: normalize (skip silence removal for cleaner output)
+        # Silence removal can cause sync issues, so we normalize only
         audio_filters = [
-            "loudnorm=I=-16:TP=-1.5:LRA=11",  # Normalize audio
-            f"silenceremove=start_periods=1:start_duration=0.1:start_threshold={settings.silence_threshold}dB:"
-            f"detection=peak:stop_periods=-1:stop_duration={settings.silence_min_duration}:"
-            f"stop_threshold={settings.silence_threshold}dB"
+            "loudnorm=I=-16:TP=-1.5:LRA=11"  # Broadcast standard normalization
         ]
         audio_chain = ",".join(audio_filters) + "[outa]"
 
