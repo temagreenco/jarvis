@@ -21,9 +21,24 @@ class Settings(BaseSettings):
     use_gpu: bool = True
     gpu_device: int = 0
 
-    # Ollama Settings
+    # Ollama Settings (Local LLM)
     ollama_host: str = "http://localhost:11434"
     ollama_model: str = "llama3.1:8b"
+
+    # OpenAI Settings
+    openai_api_key: Optional[str] = None
+    openai_model: str = "gpt-4o"
+
+    # Google Gemini Settings
+    gemini_api_key: Optional[str] = None
+    gemini_model: str = "gemini-1.5-pro"
+
+    # Anthropic Claude Settings
+    claude_api_key: Optional[str] = None
+    claude_model: str = "claude-sonnet-4-20250514"
+
+    # Default AI Provider (openai, gemini, claude, ollama)
+    default_ai_provider: str = "openai"
 
     # Whisper Settings
     whisper_model: str = "large-v3"  # Options: tiny, base, small, medium, large-v2, large-v3
