@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  # =============================================================================
+  # Crispy API - Main service
+  # =============================================================================
+  crispy:
+    build:
+      context: .
+      dockerfile: Dockerfile.cpu
+    container_name: crispy-api
+    ports:
+      - "8000:8000"
+    environment:
+      # AI Provider Keys (set in .env file)
+      - JARVIS_OPENAI_API_KEY=${OPENAI_API_KEY}
+      - JARVIS_GEMINI_API_KEY=${GEMINI_API_KEY}
+      - JARVIS_CLAUDE_API_KEY=${CLAUDE_API_KEY}
+      - JARVIS_DEFAULT_AI_PROVIDER=${DEFAULT_AI_PROVIDER:-openai}
+      # Redis for caching
+      - REDIS_URL=redis://redis:6379
+    volumes:
+      - ./data:/app/data
+    networks:
+      - crispy-net
+    restart: unless-stopped
+    depends_on:
+      - redis
+
+  # =============================================================================
+  # Redis - Caching (use existing if already running)
+  # =============================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: crispy-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - crispy-net
+    restart: unless-stopped
+
+networks:
+  crispy-net:
+    driver: bridge
+
+volumes:
+  redis_data:

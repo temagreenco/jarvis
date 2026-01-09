@@ -1,0 +1,23 @@
+version: '3.8'
+
+# CPU-only version - for development or API-only usage without GPU
+# Usage: docker-compose -f docker-compose.cpu.yml up -d
+
+services:
+  crispy:
+    build:
+      context: .
+      dockerfile: Dockerfile.cpu
+    container_name: crispy-api
+    ports:
+      - "8000:8000"
+    environment:
+      # AI Provider Keys (set in .env file)
+      - JARVIS_OPENAI_API_KEY=${OPENAI_API_KEY}
+      - JARVIS_GEMINI_API_KEY=${GEMINI_API_KEY}
+      - JARVIS_CLAUDE_API_KEY=${CLAUDE_API_KEY}
+      - JARVIS_DEFAULT_AI_PROVIDER=${DEFAULT_AI_PROVIDER:-openai}
+      - JARVIS_USE_GPU=false
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped

@@ -1,0 +1,34 @@
+version: '3.8'
+
+# Use this if you already have Redis running (like jarvis-redis)
+# Usage: docker-compose -f docker-compose.external-redis.yml up -d
+
+services:
+  crispy:
+    build:
+      context: .
+      dockerfile: Dockerfile.cpu
+    container_name: crispy-api
+    ports:
+      - "8000:8000"
+    environment:
+      # AI Provider Keys (set in .env file)
+      - JARVIS_OPENAI_API_KEY=${OPENAI_API_KEY}
+      - JARVIS_GEMINI_API_KEY=${GEMINI_API_KEY}
+      - JARVIS_CLAUDE_API_KEY=${CLAUDE_API_KEY}
+      - JARVIS_DEFAULT_AI_PROVIDER=${DEFAULT_AI_PROVIDER:-openai}
+      # Connect to existing Redis
+      - REDIS_URL=redis://jarvis-redis:6379
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    external_links:
+      - jarvis-redis:redis
+    networks:
+      - default
+      - jarvis-network
+
+networks:
+  jarvis-network:
+    external: true
+    name: jarvis_default  # Adjust to your existing network name
