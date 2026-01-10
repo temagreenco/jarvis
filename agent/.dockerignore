@@ -1,0 +1,38 @@
+# Docker Ignore
+# =============
+# Files NOT copied into Docker image
+# Keeps image small and builds fast
+
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.venv
+venv
+*.egg-info
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Local files
+workspace/
+*.log
+.env
+.env.local
+
+# Docker
+Dockerfile
+docker-compose*.yml
+.dockerignore
+
+# Docs (not needed in container)
+*.md
+!README.md

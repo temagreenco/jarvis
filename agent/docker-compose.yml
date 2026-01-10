@@ -1,0 +1,155 @@
+# Docker Compose - JARVIS Agent + Ollama
+# =======================================
+#
+# WHAT THIS DOES:
+# ---------------
+# Runs two containers:
+# 1. ollama: The LLM server (runs Llama, Qwen, etc.)
+# 2. agent: JARVIS agent that talks to Ollama
+#
+# HOW TO USE:
+# -----------
+# # Start everything (first time pulls model - takes a few minutes)
+# docker compose up
+#
+# # Run in background
+# docker compose up -d
+#
+# # View logs
+# docker compose logs -f agent
+#
+# # Stop everything
+# docker compose down
+#
+# # Rebuild after code changes
+# docker compose build agent
+# docker compose up
+
+version: '3.8'
+
+services:
+  # ============================================
+  # OLLAMA - LLM Server
+  # ============================================
+  # Runs the language model that powers the agent's "brain"
+  #
+  # WHY SEPARATE CONTAINER?
+  # - Can restart agent without reloading model
+  # - Model stays in memory (faster responses)
+  # - Can use GPU passthrough
+  #
+  ollama:
+    image: ollama/ollama:latest
+    container_name: jarvis-ollama
+
+    # Keep running so model stays loaded
+    restart: unless-stopped
+
+    # Expose Ollama API (optional - for debugging)
+    ports:
+      - "11434:11434"
+
+    # Persist downloaded models
+    # Without this, models re-download on every restart!
+    volumes:
+      - ollama_data:/root/.ollama
+
+    # GPU support (uncomment if you have NVIDIA GPU)
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+    # Health check - is Ollama responding?
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ============================================
+  # MODEL PULLER - One-time model download
+  # ============================================
+  # Downloads the LLM model on first run
+  #
+  # WHY SEPARATE SERVICE?
+  # - Only runs once (until model is cached)
+  # - Doesn't block agent startup
+  # - Can pull different models easily
+  #
+  model-puller:
+    image: ollama/ollama:latest
+    container_name: jarvis-model-puller
+
+    # Wait for Ollama to be ready
+    depends_on:
+      ollama:
+        condition: service_healthy
+
+    # Share Ollama's model storage
+    volumes:
+      - ollama_data:/root/.ollama
+
+    # Pull the model then exit
+    # Using llama3.2:3b - small but capable (2GB download)
+    # Change to llama3.1:8b for better quality (5GB)
+    entrypoint: >
+      sh -c "
+        echo 'Pulling model (this may take a few minutes on first run)...' &&
+        OLLAMA_HOST=http://ollama:11434 ollama pull llama3.2:3b &&
+        echo 'Model ready!'
+      "
+
+    # Only restart if it fails (not after success)
+    restart: "no"
+
+  # ============================================
+  # JARVIS AGENT - The AI Assistant
+  # ============================================
+  # Your autonomous AI agent
+  #
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: jarvis-agent
+
+    # Wait for model to be downloaded
+    depends_on:
+      model-puller:
+        condition: service_completed_successfully
+
+    # Interactive mode needs these
+    stdin_open: true   # Keep stdin open (-i)
+    tty: true          # Allocate TTY (-t)
+
+    # Environment configuration
+    # These override the Dockerfile defaults
+    environment:
+      - AGENT_LLM_PROVIDER=ollama
+      - AGENT_LLM_MODEL=llama3.2:3b
+      - AGENT_LLM_BASE_URL=http://ollama:11434
+      - AGENT_WORKSPACE=/workspace
+      - AGENT_VERBOSE=true
+
+    # Mount your local files into the container
+    # Agent can read/write files in ./workspace
+    volumes:
+      - ./workspace:/workspace
+
+    # Keep restarting on failure
+    restart: unless-stopped
+
+# ============================================
+# VOLUMES - Persistent Storage
+# ============================================
+# Named volumes persist data between container restarts
+#
+volumes:
+  # Stores downloaded Ollama models
+  # Without this, you'd re-download 2-5GB every restart!
+  ollama_data:
+    name: jarvis-ollama-models

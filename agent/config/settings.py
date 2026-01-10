@@ -124,8 +124,8 @@ class ToolSettings(BaseSettings):
     )
 
     allowed_paths: list[str] = Field(
-        default=["/home/user/jarvis", "/tmp"],
-        description="Directories agent can access"
+        default=["/home/user/jarvis", "/tmp", "/workspace", "/app"],
+        description="Directories agent can access (includes /workspace for Docker)"
     )
 
     # Shell commands
