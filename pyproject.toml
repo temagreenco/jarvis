@@ -20,7 +20,7 @@ classifiers = [
 ]
 
 [project.scripts]
-jarvis = "jarvis.cli:main"
+jarvis = "cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

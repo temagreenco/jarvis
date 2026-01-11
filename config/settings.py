@@ -25,6 +25,13 @@ class Settings(BaseSettings):
     ollama_host: str = "http://localhost:11434"
     ollama_model: str = "llama3.1:8b"
 
+    # Chat Settings
+    chat_model: str = "llama3.1:8b"  # Model for chat (can differ from ollama_model)
+    chat_temperature: float = 0.7  # Response creativity (0.0-1.0)
+    chat_max_tokens: int = 2048  # Maximum response length
+    chat_context_messages: int = 10  # Number of history messages to include in context
+    chat_max_history: int = 50  # Maximum messages to keep in history
+
     # Whisper Settings
     whisper_model: str = "large-v3"  # Options: tiny, base, small, medium, large-v2, large-v3
     whisper_device: str = "cuda"
