@@ -43,12 +43,28 @@ class Settings(BaseSettings):
     fps: int = 30
 
     # Subtitle Settings
-    subtitle_words_per_chunk: int = 2
-    subtitle_font_size: int = 60
-    subtitle_font: str = "Arial-Bold"
+    subtitle_words_per_chunk: int = 3
+    subtitle_font_size: int = 64
+    subtitle_font: str = "Montserrat-Bold"
     subtitle_color: str = "white"
+    subtitle_highlight_color: str = "#FFD700"  # Gold for karaoke highlight
     subtitle_stroke_color: str = "black"
-    subtitle_stroke_width: int = 3
+    subtitle_stroke_width: int = 4
+
+    # Brand Template Defaults
+    brand_primary_color: str = "#FFFFFF"
+    brand_secondary_color: str = "#FFD700"
+    brand_logo_path: Optional[str] = None
+    brand_logo_position: str = "top-right"
+    brand_logo_scale: float = 0.1
+
+    # Audio Analysis Settings
+    audio_energy_threshold: float = 0.3  # Minimum energy for emphasis detection
+    beat_min_gap: float = 0.3  # Minimum seconds between detected beats
+
+    # Face Tracking Settings
+    face_tracking_interval: float = 0.5  # Sample faces every N seconds
+    face_smoothing: bool = True  # Interpolate face positions
 
     # Editing Style (Hormozi style)
     cut_interval_min: float = 2.5  # seconds

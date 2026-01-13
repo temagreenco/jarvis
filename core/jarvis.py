@@ -39,12 +39,22 @@ class Jarvis:
 
         # Import and register modules here
         # This is done lazily to avoid circular imports
+
+        # V2: Professional-grade video editor (Opus Clip style) - DEFAULT
         try:
-            from modules.video_editor import VideoEditorModule
-            self.router.register(VideoEditorModule())
-            logger.info("Video Editor module loaded")
+            from modules.video_editor_v2 import VideoEditorV2
+            self.router.register(VideoEditorV2(), default=True)
+            logger.info("Video Editor V2 (Opus Clip style) loaded as default")
         except ImportError as e:
-            logger.warning(f"Could not load Video Editor: {e}")
+            logger.warning(f"Could not load Video Editor V2: {e}")
+
+            # Fallback to V1 if V2 fails
+            try:
+                from modules.video_editor import VideoEditorModule
+                self.router.register(VideoEditorModule(), default=True)
+                logger.info("Video Editor V1 (fallback) loaded")
+            except ImportError as e2:
+                logger.warning(f"Could not load Video Editor V1: {e2}")
 
         self._initialized = True
         logger.info("JARVIS initialization complete")
