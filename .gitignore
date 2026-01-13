@@ -69,3 +69,7 @@ Thumbs.db
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Agent stack
+agent-stack/data/
+agent-stack/venv/

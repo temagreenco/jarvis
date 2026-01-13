@@ -1,0 +1,50 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  agent-server:
+    build: ./agent-server
+    container_name: agent-server
+    restart: unless-stopped
+    depends_on:
+      - ollama
+    ports:
+      - "8000:8000"
+    environment:
+      OLLAMA_BASE_URL: "http://ollama:11434"
+      PLANNER_MODEL: "llama3.2:latest"
+      CODER_MODEL: "deepseek-coder:6.7b"
+      MAX_STEPS: "12"
+    volumes:
+      - agent_data:/data
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: open-webui
+    restart: unless-stopped
+    depends_on:
+      - ollama
+    ports:
+      - "3000:8080"
+    environment:
+      OLLAMA_BASE_URL: "http://ollama:11434"
+    volumes:
+      - openwebui_data:/app/backend/data
+
+volumes:
+  ollama_data:
+  agent_data:
+  openwebui_data:
