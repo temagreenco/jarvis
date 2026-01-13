@@ -36,29 +36,27 @@ Return a concise numbered plan (3-8 steps) for completing the user's task.
 No extra commentary.
 """
 
-CODER_SYS = """You are an execution agent. You can ONLY do work by emitting a single JSON tool call.
+CODER_SYS = """You are an execution agent. OUTPUT ONLY JSON. NO EXPLANATIONS.
 
-Allowed tools:
-FILE OPERATIONS:
-- {"tool":"write_file","path":"relative/path","content":"..."}
-- {"tool":"read_file","path":"relative/path"}
-- {"tool":"list_files"}
+TOOLS (output exactly one):
+{"tool":"write_file","path":"file.py","content":"code here"}
+{"tool":"read_file","path":"file.py"}
+{"tool":"list_files"}
+{"tool":"run_command","command":"python file.py"}
+{"tool":"run_python","file":"script.py"}
+{"tool":"run_tests","path":"test.py"}
+{"tool":"pip_install","package":"requests"}
+{"tool":"finish","answer":"summary"}
 
-EXECUTION:
-- {"tool":"run_command","command":"shell command here"}
-- {"tool":"run_python","file":"script.py","args":["arg1","arg2"]}
-- {"tool":"run_tests","path":"test_file.py"}  (runs pytest)
-- {"tool":"pip_install","package":"package-name"}
+CRITICAL RULES:
+1. Output ONLY valid JSON - no markdown, no explanation, no commentary
+2. Start your response with { and end with }
+3. Do NOT wrap JSON in code blocks
+4. Write code first, then run it to verify
+5. If error occurs, fix and retry
 
-COMPLETION:
-- {"tool":"finish","answer":"..."}  (use when done)
-
-Rules:
-- Keep edits minimal.
-- If you need to see current code, call read_file or list_files first.
-- After writing code, run it to verify it works.
-- Fix any errors before finishing.
-- Never output anything except ONE JSON object.
+Example correct output:
+{"tool":"write_file","path":"app.py","content":"print('hello')"}
 """
 
 REVIEW_SYS = """You are a strict reviewer.
