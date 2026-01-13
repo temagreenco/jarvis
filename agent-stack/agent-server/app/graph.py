@@ -5,7 +5,10 @@ from typing_extensions import TypedDict
 from langgraph.graph import StateGraph, START, END
 
 from .llm import planner, coder
-from .tools import extract_tool_call, write_file_safe, read_file_safe, list_files
+from .tools import (
+    extract_tool_call, write_file_safe, read_file_safe, list_files,
+    run_command_safe, install_package, run_python_file, run_pytest
+)
 
 # Use local data dir if /data doesn't exist (non-Docker mode)
 DATA_DIR = os.getenv("DATA_DIR", "/data")
@@ -36,14 +39,25 @@ No extra commentary.
 CODER_SYS = """You are an execution agent. You can ONLY do work by emitting a single JSON tool call.
 
 Allowed tools:
+FILE OPERATIONS:
 - {"tool":"write_file","path":"relative/path","content":"..."}
 - {"tool":"read_file","path":"relative/path"}
 - {"tool":"list_files"}
+
+EXECUTION:
+- {"tool":"run_command","command":"shell command here"}
+- {"tool":"run_python","file":"script.py","args":["arg1","arg2"]}
+- {"tool":"run_tests","path":"test_file.py"}  (runs pytest)
+- {"tool":"pip_install","package":"package-name"}
+
+COMPLETION:
 - {"tool":"finish","answer":"..."}  (use when done)
 
 Rules:
 - Keep edits minimal.
 - If you need to see current code, call read_file or list_files first.
+- After writing code, run it to verify it works.
+- Fix any errors before finishing.
 - Never output anything except ONE JSON object.
 """
 
@@ -84,14 +98,40 @@ def node_execute(state: State) -> State:
     if t == "list_files":
         files = list_files(ws)
         msgs.append({"role": "tool", "content": f"FILES:\n{files}"})
+
     elif t == "read_file":
         content = read_file_safe(ws, tool["path"])
         msgs.append({"role": "tool", "content": f"READ {tool['path']}:\n{content[:8000]}"})
+
     elif t == "write_file":
         write_file_safe(ws, tool["path"], tool["content"])
         msgs.append({"role": "tool", "content": f"WROTE {tool['path']} ({len(tool['content'])} chars)"})
+
+    elif t == "run_command":
+        result = run_command_safe(ws, tool["command"])
+        output = f"EXIT CODE: {result['exit_code']}\nSTDOUT:\n{result['stdout']}\nSTDERR:\n{result['stderr']}"
+        msgs.append({"role": "tool", "content": output})
+
+    elif t == "run_python":
+        args = tool.get("args", [])
+        result = run_python_file(ws, tool["file"], args)
+        output = f"EXIT CODE: {result['exit_code']}\nOUTPUT:\n{result['stdout']}\nERRORS:\n{result['stderr']}"
+        msgs.append({"role": "tool", "content": output})
+
+    elif t == "run_tests":
+        result = run_pytest(ws, tool.get("path", ""))
+        status = "PASSED ✓" if result["passed"] else "FAILED ✗"
+        output = f"TESTS {status}\n{result['stdout']}\n{result['stderr']}"
+        msgs.append({"role": "tool", "content": output})
+
+    elif t == "pip_install":
+        result = install_package(tool["package"])
+        status = "SUCCESS" if result["success"] else "FAILED"
+        msgs.append({"role": "tool", "content": f"PIP INSTALL {status}: {result['message']}"})
+
     elif t == "finish":
         return {"final": tool.get("answer", ""), "done": True, "steps": steps + 1, "messages": msgs}
+
     else:
         return {"error": f"Unknown tool: {t}", "done": True}
 
