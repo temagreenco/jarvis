@@ -3,11 +3,16 @@ Crispy API Server - FastAPI web service for script generation
 """
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
-from typing import Optional
+from pydantic import BaseModel, Field, model_validator
+from typing import Optional, Any
+from datetime import datetime
+import os
 import asyncio
 
 from modules.script_generator import ScriptGeneratorModule, GeneratedScript
+from modules.db_models import Job, db_session, init_db
+from modules.job_queue import JobQueue
+from modules.minio_client import presign_get_url
 from prompts.beauty_prompts import register_beauty_prompts
 from utils.logger import get_logger
 
@@ -31,6 +36,7 @@ app.add_middleware(
 
 # Global generator instance
 generator: Optional[ScriptGeneratorModule] = None
+job_queue: Optional[JobQueue] = None
 
 
 # =============================================================================
@@ -97,16 +103,90 @@ class OptionsResponse(BaseModel):
     providers: list[str]
 
 
+class JobCreateRequest(BaseModel):
+    """Request to create a processing job"""
+    source_url: Optional[str] = Field(default=None, description="Input video URL")
+    input_s3_key: Optional[str] = Field(
+        default=None, description="Input MinIO key (preferred in production)"
+    )
+    task: Optional[str] = Field(default="cut", description="cut | auto_clips")
+    auto_clips: Optional[dict[str, Any]] = Field(
+        default=None,
+        description=(
+            "Auto clip params: {max_clips, min_duration, max_duration, min_sentences, "
+            "max_sentences, hook_bias, language}"
+        ),
+    )
+    segments: Optional[list[dict[str, Any]]] = Field(
+        default=None,
+        description="List of segments to cut: [{id, start, end}]",
+    )
+    boundary_mode: Optional[str] = Field(
+        default=None,
+        description="Boundary mode: word | sentence | silence",
+    )
+    render_mode: Optional[str] = Field(
+        default=None,
+        description="Render mode: original | reels",
+    )
+    track_mode: Optional[str] = Field(
+        default=None,
+        description="Tracking mode: none | face",
+    )
+    reels: Optional[dict[str, Any]] = Field(
+        default=None,
+        description=(
+            "Reels options: {target_w, target_h, sample_fps, smoothing, deadzone_px, max_pan_px_per_s}"
+        ),
+    )
+    snap_to_silence: Optional[bool] = Field(default=None, description="Snap to silence")
+    snap_window_sec: Optional[float] = Field(
+        default=None, description="Silence snap window in seconds"
+    )
+    mode: Optional[str] = Field(default="accurate", description="fast | accurate")
+    metadata: dict[str, Any] = Field(default_factory=dict, description="Arbitrary job metadata")
+
+    @model_validator(mode="after")
+    def validate_task(self) -> "JobCreateRequest":
+        task = self.task or "cut"
+        if task == "cut":
+            if not self.segments:
+                raise ValueError("segments is required for task='cut'")
+        elif task == "auto_clips":
+            pass
+        else:
+            raise ValueError("task must be 'cut' or 'auto_clips'")
+        return self
+
+
+class JobLinks(BaseModel):
+    output: Optional[str] = None
+    clips: list[dict[str, str]] = []
+
+
+class JobStatusResponse(BaseModel):
+    id: str
+    status: str
+    links: JobLinks
+    progress: Optional[float] = None
+    progress_stage: Optional[str] = None
+    error: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
 # =============================================================================
 # Startup/Shutdown
 # =============================================================================
 
 @app.on_event("startup")
 async def startup():
-    global generator
+    global generator, job_queue
     logger.info("Starting Crispy API...")
+    init_db()
     register_beauty_prompts()
     generator = ScriptGeneratorModule()
+    job_queue = JobQueue()
     logger.info("Crispy API ready!")
 
 
@@ -124,6 +204,97 @@ async def health_check():
 async def get_options():
     """Get available generation options"""
     return generator.get_available_options()
+
+
+@app.post("/jobs", response_model=JobStatusResponse)
+def create_job(request: JobCreateRequest):
+    """Create a new video processing job."""
+    with db_session() as session:
+        job = Job(
+            status="queued",
+            input_data={
+                "source_url": request.source_url,
+                "input_s3_key": request.input_s3_key,
+                "task": request.task,
+                "auto_clips": request.auto_clips,
+                "segments": request.segments or [],
+                "boundary_mode": request.boundary_mode,
+                "render_mode": request.render_mode,
+                "track_mode": request.track_mode,
+                "reels": request.reels,
+                "snap_to_silence": request.snap_to_silence,
+                "snap_window_sec": request.snap_window_sec,
+                "mode": request.mode,
+                "metadata": request.metadata,
+            },
+        )
+        session.add(job)
+        session.flush()
+        job_id = job.id
+        created_at = job.created_at
+        updated_at = job.updated_at
+
+    if job_queue:
+        job_queue.enqueue(job_id)
+
+    return JobStatusResponse(
+        id=job_id,
+        status="queued",
+        links=JobLinks(output=None, clips=[]),
+        progress=0.0,
+        progress_stage="queued",
+        error=None,
+        created_at=created_at,
+        updated_at=updated_at,
+    )
+
+
+@app.get("/jobs/{job_id}", response_model=JobStatusResponse)
+def get_job(job_id: str):
+    """Get job status and output links."""
+    with db_session() as session:
+        job = session.get(Job, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        presign_expires = int(os.getenv("PRESIGN_EXPIRES_SECONDS", "3600"))
+        output_link: Optional[str] = None
+        if job.output_key:
+            output_link = presign_get_url(job.output_key, presign_expires)
+        elif job.output_url:
+            output_link = job.output_url
+
+        clips_links: list[dict[str, str]] = []
+        if job.clips_keys:
+            for item in job.clips_keys:
+                if isinstance(item, dict) and "key" in item:
+                    key = item["key"]
+                    clip_id = item.get("id") or key.split("/")[-1]
+                    reels_key = item.get("reels_key")
+                else:
+                    key = item
+                    clip_id = str(item).split("/")[-1]
+                    reels_key = None
+                reels_url: Optional[str] = None
+                if reels_key:
+                    reels_url = presign_get_url(reels_key, presign_expires)
+                clips_links.append(
+                    {
+                        "id": clip_id,
+                        "url": presign_get_url(key, presign_expires),
+                        "reels_url": reels_url,
+                    }
+                )
+
+        return JobStatusResponse(
+            id=job.id,
+            status=job.status,
+            links=JobLinks(output=output_link, clips=clips_links),
+            progress=job.progress,
+            progress_stage=job.progress_stage,
+            error=job.error,
+            created_at=job.created_at,
+            updated_at=job.updated_at,
+        )
 
 
 @app.post("/generate", response_model=GenerateResponse)

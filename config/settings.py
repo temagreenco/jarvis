@@ -83,6 +83,16 @@ class Settings(BaseSettings):
     telegram_token: Optional[str] = None
     telegram_allowed_users: list[int] = Field(default_factory=list)
 
+    # MinIO / S3 settings
+    minio_root_user: Optional[str] = None
+    minio_root_password: Optional[str] = None
+    minio_bucket: Optional[str] = None
+    minio_public_endpoint: Optional[str] = None
+    minio_region: Optional[str] = None
+
+    # Presigned URLs
+    presign_expires_seconds: int = 3600
+
     class Config:
         env_file = ".env"
         env_prefix = "JARVIS_"

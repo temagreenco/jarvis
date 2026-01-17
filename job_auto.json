@@ -1,0 +1,24 @@
+﻿{
+    "id":  "d4831e0c-5114-41ac-9e01-00a5a5d6cb9c",
+    "status":  "completed",
+    "links":  {
+                  "output":  "http://localhost:9000/jarvis/jobs/d4831e0c-5114-41ac-9e01-00a5a5d6cb9c/manifest.json?X-Amz-Algorithm=AWS4-HMAC-SHA256\u0026X-Amz-Credential=minioadmin%2F20260116%2Fus-east-1%2Fs3%2Faws4_request\u0026X-Amz-Date=20260116T123824Z\u0026X-Amz-Expires=3600\u0026X-Amz-SignedHeaders=host\u0026X-Amz-Signature=a4cde1e45be4bb343d72f2061feb873e64b54fd2ad400313499fc59ae8503dd7",
+                  "clips":  [
+                                {
+                                    "id":  "clip-1",
+                                    "url":  "http://localhost:9000/jarvis/jobs/d4831e0c-5114-41ac-9e01-00a5a5d6cb9c/clips/clip-1.mp4?X-Amz-Algorithm=AWS4-HMAC-SHA256\u0026X-Amz-Credential=minioadmin%2F20260116%2Fus-east-1%2Fs3%2Faws4_request\u0026X-Amz-Date=20260116T123824Z\u0026X-Amz-Expires=3600\u0026X-Amz-SignedHeaders=host\u0026X-Amz-Signature=b40f73ca2fd10e14716bd7db9cedfe572485ce5b5dceef0d6dce04d2f281e594"
+                                },
+                                {
+                                    "id":  "clip-2",
+                                    "url":  "http://localhost:9000/jarvis/jobs/d4831e0c-5114-41ac-9e01-00a5a5d6cb9c/clips/clip-2.mp4?X-Amz-Algorithm=AWS4-HMAC-SHA256\u0026X-Amz-Credential=minioadmin%2F20260116%2Fus-east-1%2Fs3%2Faws4_request\u0026X-Amz-Date=20260116T123824Z\u0026X-Amz-Expires=3600\u0026X-Amz-SignedHeaders=host\u0026X-Amz-Signature=64a5e511b05347cf7d89188067c66c0879905d8ff4303b7c406a9b38cb047e66"
+                                },
+                                {
+                                    "id":  "clip-3",
+                                    "url":  "http://localhost:9000/jarvis/jobs/d4831e0c-5114-41ac-9e01-00a5a5d6cb9c/clips/clip-3.mp4?X-Amz-Algorithm=AWS4-HMAC-SHA256\u0026X-Amz-Credential=minioadmin%2F20260116%2Fus-east-1%2Fs3%2Faws4_request\u0026X-Amz-Date=20260116T123824Z\u0026X-Amz-Expires=3600\u0026X-Amz-SignedHeaders=host\u0026X-Amz-Signature=a026dff6de5b865301cf711a611fddebd0943baa541c4af69358a812f9fa55bd"
+                                }
+                            ]
+              },
+    "error":  null,
+    "created_at":  "2026-01-16T12:35:05.228691",
+    "updated_at":  "2026-01-16T12:35:40.147830"
+}

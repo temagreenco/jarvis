@@ -20,7 +20,7 @@ numpy>=1.24.0
 
 # Video Processing
 ffmpeg-python>=0.2.0
-opencv-python>=4.8.0
+opencv-python-headless>=4.8.0
 Pillow>=10.0.0
 
 # Communication
@@ -29,6 +29,12 @@ python-telegram-bot>=20.0
 # Async
 aiohttp>=3.9.0
 aiofiles>=23.0.0
+
+# Queue/DB/Storage
+redis>=5.0.0
+SQLAlchemy>=2.0.0
+psycopg2-binary>=2.9.9
+boto3>=1.34.0
 
 # Utils
 tqdm>=4.65.0

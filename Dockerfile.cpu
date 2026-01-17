@@ -21,6 +21,8 @@ RUN pip install --no-cache-dir --upgrade pip \
         python-dotenv pydantic pydantic-settings rich typer \
         openai anthropic google-generativeai httpx \
         aiohttp aiofiles loguru tenacity \
+        redis SQLAlchemy psycopg2-binary boto3 \
+        faster-whisper opencv-python-headless \
         fastapi uvicorn[standard]
 
 # Copy application code

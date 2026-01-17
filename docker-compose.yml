@@ -2,13 +2,13 @@ version: '3.8'
 
 services:
   # =============================================================================
-  # Crispy API - Main service
+  # API - FastAPI service
   # =============================================================================
-  crispy:
+  api:
     build:
       context: .
       dockerfile: Dockerfile.cpu
-    container_name: crispy-api
+    container_name: jarvis-api
     ports:
       - "8000:8000"
     environment:
@@ -17,33 +17,158 @@ services:
       - JARVIS_GEMINI_API_KEY=${GEMINI_API_KEY}
       - JARVIS_CLAUDE_API_KEY=${CLAUDE_API_KEY}
       - JARVIS_DEFAULT_AI_PROVIDER=${DEFAULT_AI_PROVIDER:-openai}
-      # Redis for caching
-      - REDIS_URL=redis://redis:6379
+      # Backend services
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgresql+psycopg2://jarvis:jarvis@postgres:5432/jarvis
+      - MINIO_ENDPOINT=http://minio:9000
+      - MINIO_PUBLIC_ENDPOINT=${MINIO_PUBLIC_ENDPOINT:-http://localhost:9000}
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
+      - MINIO_BUCKET=${MINIO_BUCKET:-jarvis}
+      - MINIO_REGION=${MINIO_REGION:-us-east-1}
+      - PRESIGN_EXPIRES_SECONDS=${PRESIGN_EXPIRES_SECONDS:-3600}
     volumes:
       - ./data:/app/data
     networks:
-      - crispy-net
+      - jarvis-net
     restart: unless-stopped
     depends_on:
       - redis
+      - postgres
+      - minio
 
   # =============================================================================
-  # Redis - Caching (use existing if already running)
+  # Worker (CPU)
+  # =============================================================================
+  worker_cpu:
+    build:
+      context: .
+      dockerfile: Dockerfile.cpu
+    container_name: jarvis-worker-cpu
+    command: ["python", "-m", "workers.worker"]
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgresql+psycopg2://jarvis:jarvis@postgres:5432/jarvis
+      - MINIO_ENDPOINT=http://minio:9000
+      - MINIO_PUBLIC_ENDPOINT=${MINIO_PUBLIC_ENDPOINT:-http://localhost:9000}
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
+      - MINIO_BUCKET=${MINIO_BUCKET:-jarvis}
+      - MINIO_REGION=${MINIO_REGION:-us-east-1}
+      - JARVIS_USE_GPU=false
+    volumes:
+      - ./data:/app/data
+    networks:
+      - jarvis-net
+    restart: unless-stopped
+    depends_on:
+      - redis
+      - postgres
+      - minio
+
+  # =============================================================================
+  # Worker (GPU) - Optional profile
+  # =============================================================================
+  worker_gpu:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: jarvis-worker-gpu
+    profiles:
+      - gpu
+    command: ["python", "-m", "workers.worker"]
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgresql+psycopg2://jarvis:jarvis@postgres:5432/jarvis
+      - MINIO_ENDPOINT=http://minio:9000
+      - MINIO_PUBLIC_ENDPOINT=${MINIO_PUBLIC_ENDPOINT:-http://localhost:9000}
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
+      - MINIO_BUCKET=${MINIO_BUCKET:-jarvis}
+      - MINIO_REGION=${MINIO_REGION:-us-east-1}
+      - JARVIS_USE_GPU=true
+      - NVIDIA_VISIBLE_DEVICES=all
+    volumes:
+      - ./data:/app/data
+    networks:
+      - jarvis-net
+    restart: unless-stopped
+    depends_on:
+      - redis
+      - postgres
+      - minio
+    runtime: nvidia
+
+  # =============================================================================
+  # Redis - Queue
   # =============================================================================
   redis:
     image: redis:7-alpine
-    container_name: crispy-redis
+    container_name: jarvis-redis
     ports:
       - "6379:6379"
     volumes:
       - redis_data:/data
     networks:
-      - crispy-net
+      - jarvis-net
     restart: unless-stopped
 
+  # =============================================================================
+  # Postgres - Job state
+  # =============================================================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: jarvis-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=jarvis
+      - POSTGRES_USER=jarvis
+      - POSTGRES_PASSWORD=jarvis
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - jarvis-net
+    restart: unless-stopped
+
+  # =============================================================================
+  # MinIO - S3-compatible storage
+  # =============================================================================
+  minio:
+    image: minio/minio:latest
+    container_name: jarvis-minio-app
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER:-minioadmin}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:-minioadmin}
+    volumes:
+      - minio_data:/data
+    networks:
+      - jarvis-net
+    restart: unless-stopped
+
+  # =============================================================================
+  # MinIO client - For bucket provisioning
+  # =============================================================================
+  minio-mc:
+    image: minio/mc:latest
+    container_name: jarvis-minio-mc-app
+    profiles:
+      - tools
+    depends_on:
+      - minio
+    entrypoint: ["mc"]
+    networks:
+      - jarvis-net
+
 networks:
-  crispy-net:
+  jarvis-net:
     driver: bridge
 
 volumes:
   redis_data:
+  postgres_data:
+  minio_data:

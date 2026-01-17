@@ -1,0 +1,16 @@
+{
+  "presets": [
+    {
+      "preset_name": "golden_clip2_2026-01-17",
+      "boundary_mode": "word",
+      "score_threshold": 0.25,
+      "snap_to_silence": true,
+      "max_clips": 8,
+      "min_duration": 12,
+      "max_duration": 45,
+      "min_sentences": 2,
+      "max_sentences": 6,
+      "hook_bias": 1.0
+    }
+  ]
+}

@@ -1,0 +1,60 @@
+
+• Here’s a complete, concise restore guide for everything we’ve backed up.
+
+  1) Restore the repo ZIP (code)
+
+  - Backup file: F:\dev\backups\jarvis_backup_YYYY-MM-DD_HH-mm.zip
+  - Restore:
+
+  Expand-Archive -Path "F:\dev\backups\jarvis_backup_YYYY-MM-DD_HH-mm.zip"
+  -DestinationPath "F:\dev\jarvis_restored" -Force
+
+  Use F:\dev\jarvis_restored as the repo location (or replace your existing
+  repo after backing it up).
+
+  2) Restore Postgres (logical dump)
+
+  - Backup file: F:\dev\backups\jarvis\<timestamp>\postgres_dump.sql
+  - Restore into running Postgres container:
+
+  type "F:\dev\backups\jarvis\<timestamp>\postgres_dump.sql" | docker compose
+  exec -T postgres psql -U jarvis
+
+  Optional clean rebuild first:
+
+  docker compose exec -T postgres psql -U jarvis -c "DROP DATABASE IF EXISTS
+  jarvis;"
+  docker compose exec -T postgres psql -U jarvis -c "CREATE DATABASE jarvis;"
+  type "F:\dev\backups\jarvis\<timestamp>\postgres_dump.sql" | docker compose
+  exec -T postgres psql -U jarvis
+
+  3) Restore MinIO data (volume)
+
+  - Backup file: F:\dev\backups\jarvis\<timestamp>\minio_data.tar.gz
+  - Restore:
+
+  docker compose stop minio
+  docker run --rm -v "jarvis_minio_data:/data" -v "F:
+  \dev\backups\jarvis\<timestamp>:/backup" alpine sh -lc "rm -rf /data/* &&
+  tar -xzf /backup/minio_data.tar.gz -C /data"
+  docker compose start minio
+
+  4) Restore Redis data (volume)
+
+  - Backup file: F:\dev\backups\jarvis\<timestamp>\redis_data.tar.gz
+  docker compose stop redis
+  docker run --rm -v "jarvis_redis_data:/data" -v "F:
+  \dev\backups\jarvis\<timestamp>:/backup" alpine sh -lc "rm -rf /data/* &&
+  tar -xzf /backup/redis_data.tar.gz -C /data"
+
+ Added a restore script and documented it.
+
+  - New script: scripts\restore_all.ps1
+  - Runbook update: RUNBOOK.md
+
+  Usage:
+
+  .\scripts\restore_all.ps1 -BackupDir "F:\dev\backups\jarvis\YYYYMMDD-HHMMSS"
+
+  If you want options like “restore only postgres” or a dry run output, tell me and
+  I’ll add them.
