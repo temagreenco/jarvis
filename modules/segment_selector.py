@@ -124,6 +124,7 @@ INTRO_PHRASES = [
 ]
 
 VALUE_MARKERS = [
+    # English
     "step",
     "steps",
     "tip",
@@ -137,6 +138,7 @@ VALUE_MARKERS = [
     "therefore",
     "if",
     "then",
+    # Russian
     "шаг",
     "совет",
     "потому",
@@ -145,8 +147,28 @@ VALUE_MARKERS = [
     "то",
     "результат",
     "итог",
+    # Hebrew - Value/Tips indicators
+    "טיפ",
+    "טיפים",
+    "עצה",
+    "עצות",
+    "שלב",
+    "שלבים",
+    "ראשית",
+    "שנית",
+    "שלישית",
+    "כי",
+    "לכן",
+    "אז",
+    "אם",
+    "דבר ראשון",
+    "דבר שני",
+    "הדרך הנכונה",
+    "איך לעשות",
+    "מה צריך",
 ]
 EMOTION_KEYWORDS = [
+    # English
     "pain",
     "fear",
     "anxious",
@@ -155,20 +177,55 @@ EMOTION_KEYWORDS = [
     "struggle",
     "frustrated",
     "dream",
+    "love",
+    "hate",
+    "amazing",
+    "terrible",
+    # Russian
     "страх",
     "боюсь",
     "больно",
     "проблем",
     "мечта",
+    # Hebrew - Emotional triggers
+    "כאב",
+    "פחד",
+    "לחץ",
+    "מתוסכלת",
+    "מתוסכל",
+    "חלום",
+    "אהבה",
+    "שנאה",
+    "מדהים",
+    "נורא",
+    "קשה",
+    "מרגש",
+    "מעצבן",
+    "מתסכל",
+    "מפחיד",
+    "מדאיג",
+    "משגע",
+    "מטריף",
 ]
 COMPLETION_MARKERS = [
+    # Hebrew
     "לסיכום",
     "בסוף",
     "בסופו של דבר",
+    "וזהו",
+    "זה הכל",
+    "בקיצור",
+    "השורה התחתונה",
+    "המסקנה",
+    # English
     "therefore",
     "in the end",
     "so",
     "finally",
+    "to sum up",
+    "in conclusion",
+    "bottom line",
+    # Russian
     "поэтому",
     "итог",
     "в итоге",

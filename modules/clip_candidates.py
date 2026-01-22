@@ -9,8 +9,13 @@ from typing import List, Dict, Optional, Callable
 QUICK_HOOK_INDICATORS = [
     "?",  # Questions
     "!",  # Exclamations
+    # English
     "secret", "mistake", "truth", "never", "always",
     "biggest", "worst", "best", "stop", "why", "how",
+    # Hebrew
+    "סוד", "טעות", "אמת", "אף פעם", "תמיד",
+    "הכי גדול", "הכי גרוע", "הכי טוב", "תפסיקו", "למה", "איך",
+    "בעיה", "הבעיה", "האמת", "מה ש",
 ]
 
 
