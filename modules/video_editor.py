@@ -107,6 +107,7 @@ class VideoEditorModule(BaseModule):
         video_path = Path(kwargs["video_path"])
         output_dir = Path(kwargs.get("output_dir", settings.output_dir))
         num_reels = kwargs.get("num_reels", settings.target_reels)
+        language = kwargs.get("language", "auto")
 
         output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -121,7 +122,7 @@ class VideoEditorModule(BaseModule):
 
             # Step 2: Transcribe with word-level timestamps
             self.logger.info("[2/6] Transcribing audio (GPU)...")
-            segments = self._transcribe(video_path)
+            segments = self._transcribe(video_path, language=language)
             self.logger.info(f"Transcribed {len(segments)} segments")
 
             # Step 3: Find viral moments with AI
@@ -191,7 +192,7 @@ class VideoEditorModule(BaseModule):
             "fps": eval(video_stream.get("r_frame_rate", "30/1")),
         }
 
-    def _transcribe(self, video_path: Path) -> list[Segment]:
+    def _transcribe(self, video_path: Path, language: str = "auto") -> list[Segment]:
         """Transcribe video with faster-whisper (GPU accelerated)"""
         try:
             from faster_whisper import WhisperModel
@@ -206,10 +207,11 @@ class VideoEditorModule(BaseModule):
                 compute_type=settings.whisper_compute_type
             )
 
+        lang = None if language in (None, "", "auto") else language
         segments_raw, info = self.transcriber.transcribe(
             str(video_path),
             word_timestamps=True,
-            language="en"
+            language=lang
         )
 
         segments = []

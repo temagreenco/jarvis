@@ -1,7 +1,7 @@
 # JARVIS / Crispy - AI Script Generator
 # Supports GPU (CUDA) for local LLM and video processing
 
-FROM nvidia/cuda:12.1-runtime-ubuntu22.04
+FROM nvidia/cuda:12.1.1-runtime-ubuntu22.04
 
 # Prevent interactive prompts
 ENV DEBIAN_FRONTEND=noninteractive

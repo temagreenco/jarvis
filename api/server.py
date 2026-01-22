@@ -1,4 +1,4 @@
-"""
+﻿"""
 Crispy API Server - FastAPI web service for script generation
 """
 from fastapi import FastAPI, HTTPException
@@ -6,13 +6,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, model_validator
 from typing import Optional, Any
 from datetime import datetime
+from uuid import uuid4
 import os
 import asyncio
 
 from modules.script_generator import ScriptGeneratorModule, GeneratedScript
 from modules.db_models import Job, db_session, init_db
 from modules.job_queue import JobQueue
-from modules.minio_client import presign_get_url
+from modules.minio_client import presign_get_url, presign_put_url
 from prompts.beauty_prompts import register_beauty_prompts
 from utils.logger import get_logger
 
@@ -49,7 +50,7 @@ class GenerateRequest(BaseModel):
     status: str = Field(default="practitioner", description="User status: practitioner, academy_owner")
     goal: str = Field(default="exposure", description="Content goal: exposure, value, sales")
     tone: str = Field(default="casual", description="Tone: professional, casual, energetic, slang")
-    topic: Optional[str] = Field(default=None, description="Specific topic (e.g., 'גל ציפורניים')")
+    topic: Optional[str] = Field(default=None, description="Specific topic (e.g., 'Ч’Чњ Ч¦Ч™Ч¤Ч•ЧЁЧ Ч™Ч™Чќ')")
     num_scripts: int = Field(default=5, ge=1, le=10, description="Number of scripts (1-10)")
     provider: Optional[str] = Field(default=None, description="AI provider: openai, gemini, claude")
 
@@ -60,7 +61,7 @@ class GenerateRequest(BaseModel):
                 "status": "practitioner",
                 "goal": "exposure",
                 "tone": "slang",
-                "topic": "גל ציפורניים",
+                "topic": "Ч’Чњ Ч¦Ч™Ч¤Ч•ЧЁЧ Ч™Ч™Чќ",
                 "num_scripts": 5,
                 "provider": "openai"
             }
@@ -114,8 +115,16 @@ class JobCreateRequest(BaseModel):
         default=None,
         description=(
             "Auto clip params: {max_clips, min_duration, max_duration, min_sentences, "
-            "max_sentences, hook_bias, language}"
+            "max_sentences, hook_bias, score_threshold, min_avg_word_confidence, diversity_radius_s, "
+            "language, target_duration_sec, prefer_duration_min_sec, prefer_duration_max_sec, "
+            "max_duration_sec, enable_extend_to_completion, sentence_max_gap, extend_silence_gap_sec}"
         ),
+    )
+    transcript_s3_key: Optional[str] = Field(
+        default=None, description="Optional MinIO key for transcript JSON"
+    )
+    transcript: Optional[dict[str, Any]] = Field(
+        default=None, description="Optional inline transcript payload"
     )
     segments: Optional[list[dict[str, Any]]] = Field(
         default=None,
@@ -143,6 +152,15 @@ class JobCreateRequest(BaseModel):
     snap_window_sec: Optional[float] = Field(
         default=None, description="Silence snap window in seconds"
     )
+    hook_first_cutting: Optional[bool] = Field(
+        default=None, description="Shift clip start to earliest strong hook"
+    )
+    hook_window_sec: Optional[float] = Field(
+        default=None, description="Hook search window in seconds"
+    )
+    hook_min_rms_db: Optional[float] = Field(
+        default=None, description="Minimum RMS dB for hook start"
+    )
     mode: Optional[str] = Field(default="accurate", description="fast | accurate")
     metadata: dict[str, Any] = Field(default_factory=dict, description="Arbitrary job metadata")
 
@@ -159,9 +177,15 @@ class JobCreateRequest(BaseModel):
         return self
 
 
+class ClipLink(BaseModel):
+    id: str
+    url: str
+    reels_url: Optional[str] = None
+
+
 class JobLinks(BaseModel):
     output: Optional[str] = None
-    clips: list[dict[str, str]] = []
+    clips: list[ClipLink] = []
 
 
 class JobStatusResponse(BaseModel):
@@ -173,6 +197,18 @@ class JobStatusResponse(BaseModel):
     error: Optional[str] = None
     created_at: datetime
     updated_at: datetime
+
+
+class UploadUrlRequest(BaseModel):
+    filename: str = Field(description="Original filename")
+    content_type: Optional[str] = Field(default=None, description="Optional content type")
+    prefix: Optional[str] = Field(default="inputs", description="Key prefix (default: inputs)")
+
+
+class UploadUrlResponse(BaseModel):
+    key: str
+    upload_url: str
+    expires_seconds: int
 
 
 # =============================================================================
@@ -200,6 +236,21 @@ async def health_check():
     return {"status": "healthy", "service": "crispy"}
 
 
+@app.post("/upload-url", response_model=UploadUrlResponse)
+def create_upload_url(request: UploadUrlRequest):
+    """Create a presigned upload URL for MinIO."""
+    filename = os.path.basename(request.filename or "")
+    if not filename:
+        raise HTTPException(status_code=400, detail="filename is required")
+    prefix = (request.prefix or "inputs").strip("/").replace("\\", "/")
+    if ".." in prefix.split("/"):
+        raise HTTPException(status_code=400, detail="invalid prefix")
+    key = f"{prefix}/{uuid4()}/{filename}"
+    expires = int(os.getenv("PRESIGN_EXPIRES_SECONDS", "3600"))
+    upload_url = presign_put_url(key, expires, request.content_type)
+    return UploadUrlResponse(key=key, upload_url=upload_url, expires_seconds=expires)
+
+
 @app.get("/options", response_model=OptionsResponse)
 async def get_options():
     """Get available generation options"""
@@ -217,6 +268,8 @@ def create_job(request: JobCreateRequest):
                 "input_s3_key": request.input_s3_key,
                 "task": request.task,
                 "auto_clips": request.auto_clips,
+                "transcript_s3_key": request.transcript_s3_key,
+                "transcript": request.transcript,
                 "segments": request.segments or [],
                 "boundary_mode": request.boundary_mode,
                 "render_mode": request.render_mode,
@@ -224,6 +277,9 @@ def create_job(request: JobCreateRequest):
                 "reels": request.reels,
                 "snap_to_silence": request.snap_to_silence,
                 "snap_window_sec": request.snap_window_sec,
+                "hook_first_cutting": request.hook_first_cutting,
+                "hook_window_sec": request.hook_window_sec,
+                "hook_min_rms_db": request.hook_min_rms_db,
                 "mode": request.mode,
                 "metadata": request.metadata,
             },
@@ -390,3 +446,4 @@ async def refine_script(request: RefineRequest):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+

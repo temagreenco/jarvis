@@ -58,7 +58,7 @@ def _merge_short_fragments(sentences: List[Dict], min_duration: float = 0.6) -> 
     return merged
 
 
-def build_sentences(words: List[Dict], max_gap: float = 0.45) -> List[Dict]:
+def build_sentences(words: List[Dict], max_gap: float = 0.9) -> List[Dict]:
     ordered = sorted(words, key=lambda w: float(w.get("start", 0.0)))
     sentences: List[Dict] = []
     current_words: List[Dict] = []
@@ -87,6 +87,7 @@ def build_sentences(words: List[Dict], max_gap: float = 0.45) -> List[Dict]:
                 "start": float(word.get("start", 0.0)),
                 "end": float(word.get("end", 0.0)),
                 "w": word_text,
+                "p": word.get("p"),
             }
         )
 

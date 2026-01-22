@@ -40,3 +40,22 @@ def presign_get_url(key: str, expires_seconds: int = 3600) -> str:
         Params={"Bucket": bucket, "Key": key},
         ExpiresIn=expires_seconds,
     )
+
+
+def presign_put_url(
+    key: str,
+    expires_seconds: int = 3600,
+    content_type: Optional[str] = None,
+) -> str:
+    client = get_s3_client(public=True)
+    if not client:
+        raise RuntimeError("S3 client is not configured")
+    bucket = os.getenv("MINIO_BUCKET", "jarvis")
+    params: dict[str, Any] = {"Bucket": bucket, "Key": key}
+    if content_type:
+        params["ContentType"] = content_type
+    return client.generate_presigned_url(
+        "put_object",
+        Params=params,
+        ExpiresIn=expires_seconds,
+    )

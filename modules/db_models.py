@@ -10,7 +10,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from typing import Generator, Optional
 
-from sqlalchemy import Column, DateTime, Float, JSON, String, Text, create_engine, text
+from sqlalchemy import Column, DateTime, Float, Integer, JSON, String, Text, create_engine, text
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 DATABASE_URL = os.getenv(
@@ -42,8 +42,21 @@ class Job(Base):
     progress = Column(Float, nullable=True)
     progress_stage = Column(String(128), nullable=True)
     error = Column(Text, nullable=True)
+    retry_count = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+VALID_STATUS_TRANSITIONS = {
+    "queued": {"processing", "failed"},
+    "processing": {"completed", "failed"},
+    "failed": {"queued"},
+    "completed": set(),
+}
+
+
+def validate_status_transition(current: str, new: str) -> bool:
+    return new in VALID_STATUS_TRANSITIONS.get(current, set())
 
 
 def init_db(retries: int = 10, delay_seconds: float = 2.0) -> None:
@@ -64,6 +77,9 @@ def init_db(retries: int = 10, delay_seconds: float = 2.0) -> None:
                 )
                 conn.execute(
                     text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS progress_stage VARCHAR(128)")
+                )
+                conn.execute(
+                    text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS retry_count INTEGER DEFAULT 0")
                 )
             return
         except Exception as exc:

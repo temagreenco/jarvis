@@ -1,22 +1,37 @@
 Param(
     [Parameter(Mandatory = $true)]
     [string]$InputPath,
+    [string]$TranscriptPath,
     [string]$ObjectKey = "inputs/sample.mp4",
+    [string]$TranscriptObjectKey = "inputs/sample_transcript.json",
     [string]$ApiBase = "http://localhost:8000",
     [bool]$SnapToSilence = $true,
     [double]$SnapWindowSec = 1.0,
     [int]$MaxClips = 5,
     [double]$MinDuration = 12,
     [double]$MaxDuration = 45,
-    [int]$MinSentences = 2,
-    [int]$MaxSentences = 6,
+    [int]$MinSentences = 4,
+    [int]$MaxSentences = 12,
     [double]$HookBias = 1.0,
     [double]$ScoreThreshold = 0.25,
+    [double]$MinAvgWordConfidence = 0.7,
+    [double]$DiversityRadiusSec = 30,
+    [double]$TargetDurationSec = 32.0,
+    [double]$PreferDurationMinSec = 25.0,
+    [double]$PreferDurationMaxSec = 40.0,
+    [double]$MaxDurationSec = 60.0,
+    [bool]$EnableExtendToCompletion = $true,
+    [double]$SentenceMaxGap = 0.9,
+    [double]$ExtendSilenceGapSec = 1.0,
+    [string]$Language = $null,
     [string]$BoundaryMode = "word",
-    [string]$RenderMode = "original",
+    [string]$RenderMode = "reels",
     [string]$TrackMode = "none",
     [string]$MotionMode = "static",
     [double]$LookspaceRatio = 0,
+    [bool]$HookFirstCutting = $false,
+    [double]$HookWindowSec = 6.0,
+    [double]$HookMinRmsDb = -35.0,
     [string]$Preset
 )
 
@@ -48,10 +63,23 @@ if ($Preset) {
     if ($preset.min_sentences -ne $null) { $MinSentences = [int]$preset.min_sentences }
     if ($preset.max_sentences -ne $null) { $MaxSentences = [int]$preset.max_sentences }
     if ($preset.hook_bias -ne $null) { $HookBias = [double]$preset.hook_bias }
+    if ($preset.language) { $Language = $preset.language }
+    if ($preset.min_avg_word_confidence -ne $null) { $MinAvgWordConfidence = [double]$preset.min_avg_word_confidence }
+    if ($preset.diversity_radius_s -ne $null) { $DiversityRadiusSec = [double]$preset.diversity_radius_s }
+    if ($preset.target_duration_sec -ne $null) { $TargetDurationSec = [double]$preset.target_duration_sec }
+    if ($preset.prefer_duration_min_sec -ne $null) { $PreferDurationMinSec = [double]$preset.prefer_duration_min_sec }
+    if ($preset.prefer_duration_max_sec -ne $null) { $PreferDurationMaxSec = [double]$preset.prefer_duration_max_sec }
+    if ($preset.max_duration_sec -ne $null) { $MaxDurationSec = [double]$preset.max_duration_sec }
+    if ($preset.enable_extend_to_completion -ne $null) { $EnableExtendToCompletion = [bool]$preset.enable_extend_to_completion }
+    if ($preset.sentence_max_gap -ne $null) { $SentenceMaxGap = [double]$preset.sentence_max_gap }
+    if ($preset.extend_silence_gap_sec -ne $null) { $ExtendSilenceGapSec = [double]$preset.extend_silence_gap_sec }
     if ($preset.render_mode) { $RenderMode = $preset.render_mode }
     if ($preset.track_mode) { $TrackMode = $preset.track_mode }
     if ($preset.motion_mode) { $MotionMode = $preset.motion_mode }
     if ($preset.lookspace_ratio -ne $null) { $LookspaceRatio = [double]$preset.lookspace_ratio }
+    if ($preset.hook_first_cutting -ne $null) { $HookFirstCutting = [bool]$preset.hook_first_cutting }
+    if ($preset.hook_window_sec -ne $null) { $HookWindowSec = [double]$preset.hook_window_sec }
+    if ($preset.hook_min_rms_db -ne $null) { $HookMinRmsDb = [double]$preset.hook_min_rms_db }
 }
 
 $minioUser = $(if ($Env:MINIO_ROOT_USER) { $Env:MINIO_ROOT_USER } else { "minioadmin" })
@@ -64,6 +92,18 @@ $inputDir = Split-Path $inputFull -Parent
 $inputFile = Split-Path $inputFull -Leaf
 
 docker compose run --rm -e MC_HOST_local=$mcHostLocal -v "$inputDir`:/work" minio-mc cp "/work/$inputFile" "local/$minioBucket/$ObjectKey"
+
+$transcriptKey = $null
+if ($TranscriptPath) {
+    if (-not (Test-Path $TranscriptPath)) {
+        throw "Transcript file not found: $TranscriptPath"
+    }
+    $transcriptFull = (Resolve-Path $TranscriptPath).Path
+    $transcriptDir = Split-Path $transcriptFull -Parent
+    $transcriptFile = Split-Path $transcriptFull -Leaf
+    docker compose run --rm -e MC_HOST_local=$mcHostLocal -v "$transcriptDir`:/work" minio-mc cp "/work/$transcriptFile" "local/$minioBucket/$TranscriptObjectKey"
+    $transcriptKey = $TranscriptObjectKey
+}
 
 $reelsOptions = @{
     target_w = 1080
@@ -95,14 +135,28 @@ $payload = @{
     render_mode = $RenderMode
     track_mode = $TrackMode
     reels = $reelsOptions
+    transcript_s3_key = $transcriptKey
+    hook_first_cutting = $HookFirstCutting
+    hook_window_sec = $HookWindowSec
+    hook_min_rms_db = $HookMinRmsDb
     auto_clips = @{
-        max_clips = $MaxClips
-        min_duration = $MinDuration
-        max_duration = $MaxDuration
-        min_sentences = $MinSentences
-        max_sentences = $MaxSentences
-        hook_bias = $HookBias
-        score_threshold = $ScoreThreshold
+      max_clips = $MaxClips
+      min_duration = $MinDuration
+      max_duration = $MaxDuration
+      min_sentences = $MinSentences
+      max_sentences = $MaxSentences
+      hook_bias = $HookBias
+      score_threshold = $ScoreThreshold
+      min_avg_word_confidence = $MinAvgWordConfidence
+      diversity_radius_s = $DiversityRadiusSec
+      target_duration_sec = $TargetDurationSec
+      prefer_duration_min_sec = $PreferDurationMinSec
+      prefer_duration_max_sec = $PreferDurationMaxSec
+      max_duration_sec = $MaxDurationSec
+      enable_extend_to_completion = $EnableExtendToCompletion
+      sentence_max_gap = $SentenceMaxGap
+      extend_silence_gap_sec = $ExtendSilenceGapSec
+      language = $Language
     }
     metadata = @{ test = $true }
 } | ConvertTo-Json -Depth 5
