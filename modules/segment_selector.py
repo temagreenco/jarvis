@@ -9,6 +9,7 @@ from modules.clip_candidates import generate_candidates
 
 
 HOOK_KEYWORDS = [
+    # English - Questions & Curiosity
     "secret",
     "mistake",
     "don't",
@@ -23,12 +24,37 @@ HOOK_KEYWORDS = [
     "reveal",
     "nobody",
     "hidden",
+    # English - Urgency & Action
+    "stop",
+    "warning",
+    "avoid",
+    "immediately",
+    # English - Intensity & Superlatives
+    "biggest",
+    "worst",
+    "best",
+    "only",
+    "most",
+    "number one",
+    "#1",
+    # English - Emotional Triggers
+    "shocked",
+    "surprising",
+    "crazy",
+    "insane",
+    "unbelievable",
+    # Russian
     "ошибка",
     "секрет",
     "никто",
     "почему",
     "как",
     "что",
+    "срочно",
+    "самая большая",
+    "худшая",
+    "лучшая",
+    # Hebrew - Core hooks
     "הבעיה היא",
     "מה שלא אומרים לכם",
     "תקשיבו טוב",
@@ -36,8 +62,17 @@ HOOK_KEYWORDS = [
     "אף אחד לא",
     "אסור",
     "אל תעשו",
+    # Hebrew - Urgency & Intensity
+    "עכשיו",
+    "תפסיקו",
+    "הכי גדול",
+    "הכי גרוע",
+    "הכי טוב",
+    "לא תאמינו",
+    "מטורף",
 ]
 HOOK_PHRASES = [
+    # English - High-impact openers
     "the truth is",
     "what they don't tell you",
     "listen carefully",
@@ -45,11 +80,34 @@ HOOK_PHRASES = [
     "let me explain",
     "i was wrong",
     "this changes everything",
+    "stop doing this",
+    "biggest mistake",
+    "game changer",
+    "wish i knew",
+    "changed my life",
+    "blew my mind",
+    "can't believe",
+    "nobody talks about",
+    "unpopular opinion",
+    "hot take",
+    "if you're not",
+    "the reason why",
+    "here's why",
+    # Russian
+    "вот почему",
+    "самая большая ошибка",
+    "никто не говорит",
+    "изменило мою жизнь",
+    # Hebrew
     "האמת היא",
     "מה שלא אומרים לכם",
     "תקשיבו טוב",
     "הבעיה היא",
     "תשמעו רגע",
+    "הטעות הכי גדולה",
+    "שינה לי את החיים",
+    "אף אחד לא מדבר על",
+    "הסיבה שבגללה",
 ]
 INTRO_PHRASES = [
     "hey",
@@ -123,42 +181,115 @@ def _count_hits(text: str, keywords: List[str]) -> int:
 
 
 def _hook_score(sentences: List[Dict]) -> tuple[float, str]:
+    """Score hook quality - prioritizes first sentence heavily."""
     if not sentences:
         return 0.0, ""
-    hook_text = " ".join(sentence["text"] for sentence in sentences[:2]).strip()
-    return score_hook_text(hook_text)
+    # First sentence is weighted 2x more than second
+    first_text = sentences[0].get("text", "").strip()
+    first_score, first_reasons = score_hook_text(first_text)
+
+    if len(sentences) >= 2:
+        second_text = sentences[1].get("text", "").strip()
+        second_score, _ = score_hook_text(second_text)
+        # First sentence weighted 2x, second 0.5x
+        combined_score = first_score * 2.0 + second_score * 0.5
+    else:
+        combined_score = first_score * 2.0
+
+    return combined_score, first_reasons
 
 
 def score_hook_text(text: str) -> tuple[float, str]:
+    """Score a single text for hook quality."""
     hook_text = (text or "").strip()
     if not hook_text:
         return 0.0, ""
+    lowered = hook_text.lower()
     score = 0.0
     reasons = []
+
+    # Question mark - strong hook indicator
     if "?" in hook_text:
         score += 1.5
         reasons.append("question")
-    if hook_text.startswith(("why", "how", "what", "??????", "???", "???", "למה", "איך", "מה")):
+
+    # Interrogative starters (English, Russian, Hebrew)
+    interrogatives = (
+        "why", "how", "what", "when", "who", "which",
+        "почему", "как", "что", "когда", "кто",
+        "למה", "איך", "מה", "מתי", "מי",
+    )
+    if lowered.startswith(interrogatives):
         score += 1.0
         reasons.append("interrogative")
-    if any(char.isdigit() for char in hook_text[:8]):
+
+    # Numbers in first 10 chars (listicles perform well)
+    if any(char.isdigit() for char in hook_text[:10]):
         score += 1.0
         reasons.append("number")
-    if any(phrase in hook_text.lower() for phrase in HOOK_PHRASES):
-        score += 1.0
+
+    # Check for high-impact phrases
+    phrase_hits = sum(1 for phrase in HOOK_PHRASES if phrase in lowered)
+    if phrase_hits:
+        score += 1.2 * phrase_hits
         reasons.append("hook_phrase")
-    hits = _count_hits(hook_text, HOOK_KEYWORDS)
-    if hits:
-        score += 1.0 + 0.5 * hits
+
+    # Check for hook keywords
+    keyword_hits = _count_hits(hook_text, HOOK_KEYWORDS)
+    if keyword_hits:
+        score += 0.8 + 0.4 * keyword_hits
         reasons.append("hook_words")
+
+    # Intensity boosters - superlatives and emphasis
+    intensity_words = ["never", "always", "every", "all", "biggest", "worst", "best", "only", "must"]
+    intensity_hits = sum(1 for w in intensity_words if w in lowered)
+    if intensity_hits:
+        score += 0.5 * intensity_hits
+        reasons.append("intensity")
+
+    # Exclamation - shows energy
+    if "!" in hook_text:
+        score += 0.3
+        reasons.append("exclamation")
+
+    # Penalty for weak/generic intros
+    if is_intro_text(hook_text):
+        score -= 1.5
+        reasons.append("weak_intro_penalty")
+
     return score, ",".join(reasons)
 
 
 def is_intro_text(text: str) -> bool:
+    """Check if text is a weak intro (greetings, generic openers).
+
+    Uses word boundary matching to avoid false positives like 'hi' in 'this'.
+    """
     lowered = (text or "").strip().lower()
     if not lowered:
         return True
-    return any(phrase in lowered for phrase in INTRO_PHRASES)
+
+    # Split into words for accurate matching
+    words = set(lowered.split())
+
+    # Single-word intros must match exactly as words
+    single_word_intros = {"hey", "hi", "hello", "welcome", "שלום"}
+    if words & single_word_intros:
+        # Only count if it's at the start
+        first_word = lowered.split()[0] if lowered.split() else ""
+        if first_word in single_word_intros:
+            return True
+
+    # Multi-word phrases use substring match (more reliable)
+    multi_word_intros = [
+        "today we will",
+        "today we're",
+        "today i will",
+        "היי כולם",
+        "ברוכים הבאים",
+        "אז היום",
+    ]
+    return any(phrase in lowered for phrase in multi_word_intros)
 
 
 def _value_score(text: str) -> float:

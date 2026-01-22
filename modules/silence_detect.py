@@ -46,37 +46,103 @@ def detect_silences(
     return silences
 
 
+def _find_nearest_silence_boundary(
+    target_time: float,
+    silences: List[Dict],
+    window_sec: float,
+    prefer_before: bool = True,
+) -> tuple[float, bool]:
+    """Find the nearest silence boundary within window.
+
+    Args:
+        target_time: The time to snap from
+        silences: List of silence intervals
+        window_sec: Maximum distance to search
+        prefer_before: If True, prefer silence before target_time
+
+    Returns:
+        Tuple of (snapped_time, was_snapped)
+    """
+    candidates: List[tuple[float, float]] = []  # (boundary_time, distance)
+
+    for silence in silences:
+        # Check silence end (good for segment start - start after silence)
+        if abs(silence["end"] - target_time) <= window_sec:
+            candidates.append((silence["end"], abs(silence["end"] - target_time)))
+
+        # Check silence start (good for segment end - end before silence)
+        if abs(silence["start"] - target_time) <= window_sec:
+            candidates.append((silence["start"], abs(silence["start"] - target_time)))
+
+    if not candidates:
+        return target_time, False
+
+    # Sort by distance, prefer boundaries before target if prefer_before is True
+    if prefer_before:
+        candidates.sort(key=lambda x: (x[0] > target_time, x[1]))
+    else:
+        candidates.sort(key=lambda x: (x[0] < target_time, x[1]))
+
+    return candidates[0][0], True
+
+
 def snap_segment_to_silence(
     segment: Dict,
     silences: List[Dict],
     window_sec: float = 1.0,
+    start_window_sec: float | None = None,
+    end_window_sec: float | None = None,
 ) -> Dict:
+    """Snap segment boundaries to nearest silence for cleaner cuts.
+
+    Args:
+        segment: Segment with 'start' and 'end' keys
+        silences: List of silence intervals from detect_silences()
+        window_sec: Default snap window in seconds
+        start_window_sec: Optional separate window for start snapping
+        end_window_sec: Optional separate window for end snapping
+
+    Returns:
+        Segment dict with added 'snapped_start' and 'snapped_end' keys
+    """
     start = float(segment["start"])
     end = float(segment["end"])
-    snapped_start = start
-    snapped_end = end
+    original_duration = end - start
 
-    prev_silence_end = None
-    for silence in silences:
-        if silence["end"] <= start and start - silence["end"] <= window_sec:
-            prev_silence_end = silence["end"]
-    if prev_silence_end is not None:
-        snapped_start = prev_silence_end
+    start_win = start_window_sec if start_window_sec is not None else window_sec
+    end_win = end_window_sec if end_window_sec is not None else window_sec
 
-    next_silence_start = None
-    for silence in silences:
-        if silence["start"] >= end and silence["start"] - end <= window_sec:
-            next_silence_start = silence["start"]
-            break
-    if next_silence_start is not None:
-        snapped_end = next_silence_start
+    # Snap start - prefer silence boundary before original start
+    snapped_start, start_was_snapped = _find_nearest_silence_boundary(
+        start, silences, start_win, prefer_before=True
+    )
 
+    # Snap end - prefer silence boundary after original end
+    snapped_end, end_was_snapped = _find_nearest_silence_boundary(
+        end, silences, end_win, prefer_before=False
+    )
+
+    # Validate: snapped segment must be positive duration
+    # and not deviate too much from original
     if snapped_end <= snapped_start:
         snapped_start = start
         snapped_end = end
+        start_was_snapped = False
+        end_was_snapped = False
+
+    # Don't allow snapping to change duration by more than 2x window
+    max_duration_change = window_sec * 2
+    new_duration = snapped_end - snapped_start
+    if abs(new_duration - original_duration) > max_duration_change:
+        snapped_start = start
+        snapped_end = end
+        start_was_snapped = False
+        end_was_snapped = False
 
     return {
         **segment,
         "snapped_start": float(snapped_start),
         "snapped_end": float(snapped_end),
+        "start_snapped": start_was_snapped,
+        "end_snapped": end_was_snapped,
     }
