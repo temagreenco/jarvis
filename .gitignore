@@ -17,6 +17,7 @@ clips/
 _debug/
 _backup/
 data/
+logs/
 *.mp4
 *.mov
 *.mkv
