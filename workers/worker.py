@@ -529,9 +529,9 @@ def worker_loop(poll_interval: float = 1.0) -> None:
                             clip_words = collect_words_in_window(transcript_words, clip_start, clip_end)
                             first_word = clip_words[0] if clip_words else None
                             last_word = clip_words[-1] if clip_words else None
-                            if boundary_mode == "word" and first_word and last_word:
-                                clip_start = float(first_word["start"])
-                                clip_end = float(last_word["end"])
+                            # Note: boundary_mode word will be applied AFTER snapping to silence
+                            # This ensures we get the best of both: silence boundaries + word precision
+                            # hook_first has priority and will be respected in the final boundary_mode step
                             segments.append(
                                 {
                                     "id": f"clip-{idx + 1}",
@@ -621,7 +621,9 @@ def worker_loop(poll_interval: float = 1.0) -> None:
                     if snap_to_silence is None:
                         snap_to_silence = task == "auto_clips"
                     snap_window_sec = float(input_data.get("snap_window_sec", 1.0))
-                    snap_window_sec = min(snap_window_sec, 0.25)
+                    # Limit to reasonable maximum (2.0s) to prevent excessive boundary shifts
+                    # The silence_detect module already has protection: max_duration_change = window_sec * 2
+                    snap_window_sec = min(snap_window_sec, 2.0)
 
                     silences = []
                     if snap_to_silence:
@@ -633,19 +635,29 @@ def worker_loop(poll_interval: float = 1.0) -> None:
                             snapped = snap_segment_to_silence(segment, silences, snap_window_sec)
                         else:
                             snapped = {**segment, "snapped_start": segment["start"], "snapped_end": segment["end"]}
-                        if task == "auto_clips":
+                        
+                        # For auto_clips: ensure end doesn't go backwards, but allow forward adjustment
+                        # Exception: if boundary_mode is word, we'll adjust to word boundaries below
+                        if task == "auto_clips" and boundary_mode != "word":
                             snapped["snapped_end"] = max(
                                 float(snapped["snapped_end"]), float(segment["end"])
                             )
+                        
+                        # Apply boundary_mode word after snapping (final word-level precision)
                         if task == "auto_clips" and boundary_mode == "word":
                             meta = segment_meta[idx]
                             first_word = meta.get("first_word")
                             last_word = meta.get("last_word")
+                            hook_first_used = meta.get("hook_first_used", False)
+                            
                             if first_word:
-                                snapped["snapped_start"] = min(
-                                    float(snapped["snapped_start"]), float(first_word["start"])
-                                )
+                                # Only adjust start if hook_first wasn't used (hook_first has priority)
+                                if not hook_first_used:
+                                    snapped["snapped_start"] = min(
+                                        float(snapped["snapped_start"]), float(first_word["start"])
+                                    )
                             if last_word:
+                                # Always adjust end to last word boundary (but not before snapped_end from silence)
                                 snapped["snapped_end"] = max(
                                     float(snapped["snapped_end"]), float(last_word["end"])
                                 )
@@ -661,10 +673,28 @@ def worker_loop(poll_interval: float = 1.0) -> None:
                         snapped_segments.append(snapped)
 
                     tracker.update("cutting_clips", 55.0)
-                    cut_segments_payload = [
-                        {"id": s["id"], "start": s["snapped_start"], "end": s["snapped_end"]}
-                        for s in snapped_segments
-                    ]
+                    cut_segments_payload = []
+                    for s in snapped_segments:
+                        start = float(s["snapped_start"])
+                        end = float(s["snapped_end"])
+                        # Final validation: ensure valid segment boundaries
+                        if end <= start:
+                            logger.warning(
+                                f"Invalid segment {s['id']}: end ({end:.3f}) <= start ({start:.3f}), "
+                                f"skipping"
+                            )
+                            continue
+                        min_dur = min_duration if task == "auto_clips" else 0.1
+                        if (end - start) < min_dur:
+                            logger.warning(
+                                f"Segment {s['id']} too short: {end - start:.3f}s < {min_dur:.3f}s, "
+                                f"skipping"
+                            )
+                            continue
+                        cut_segments_payload.append({"id": s["id"], "start": start, "end": end})
+                    
+                    if not cut_segments_payload:
+                        raise RuntimeError("No valid segments to cut after validation")
                     clip_results = []
                     total_segments = max(len(cut_segments_payload), 1)
                     for idx, seg in enumerate(cut_segments_payload):
